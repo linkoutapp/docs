@@ -1,0 +1,28 @@
+---
+title: Agent plugins
+description: Packaged Claude Code and Codex read-only plugin metadata and skill.
+---
+
+# Agent plugins
+
+The package publish allowlist includes both agent manifests and the shared skill:
+
+| Allowlisted path | Role |
+| --- | --- |
+| `.claude-plugin/plugin.json` | Claude plugin manifest; points to `./skills/` and `./.mcp.json` |
+| `.codex-plugin/plugin.json` | Codex plugin manifest; declares the local Node MCP command and read-only interface metadata |
+| `skills/linkedin-read/SKILL.md` | Shared `linkedin-read` operating instructions |
+| `skills/linkedin-read/agents/openai.yaml` | Display metadata and the default read-only prompt |
+| `.mcp.json` | Claude stdio MCP configuration |
+
+Both manifests identify `linkout-linkedin-read` version `2.0.0`. Their interface is the same bounded read surface described under [MCP](/interfaces/mcp); installing plugin metadata does not expose the package's mutation services.
+
+The shared skill requires visible local Chrome, manual LinkedIn authentication, an explicit LinkedIn URL for profile-, thread-, or activity-specific reads, the smallest practical `count`, and only the data needed for the request. It explicitly forbids broadening a request into bulk collection.
+
+The skill also forbids typing, sending messages, connecting, inviting, liking, endorsing, submitting credentials or 2FA, changing filters, and fingerprint spoofing. It instructs the agent to stop rather than retry around login, checkpoint, CAPTCHA, automation warning, restriction, session expiry, selector ambiguity, or another unexpected modal.
+
+Source: [package file list](https://github.com/linkoutapp/linkout-scraper/blob/main/package.json), [Claude manifest](https://github.com/linkoutapp/linkout-scraper/blob/main/.claude-plugin/plugin.json), [Codex manifest](https://github.com/linkoutapp/linkout-scraper/blob/main/.codex-plugin/plugin.json), [shared skill](https://github.com/linkoutapp/linkout-scraper/blob/main/skills/linkedin-read/SKILL.md), [OpenAI metadata](https://github.com/linkoutapp/linkout-scraper/blob/main/skills/linkedin-read/agents/openai.yaml).
+
+:::warning Platform risk
+A read-only plugin does not guarantee account safety or compliance. Security controls require manual handling in visible Chrome.
+:::

@@ -1,0 +1,80 @@
+---
+title: Action policy
+description: Confirmation, operating hours, limits, stop states, and ledger behavior.
+---
+
+# Action policy
+
+Every mutation is disabled by default.
+
+| Operation | Default enabled | Default successful-action limit |
+| --- | ---: | ---: |
+| `connect` | No | 10 |
+| `message` | No | 20 |
+| `like` | No | 30 |
+| `endorse` | No | 10 |
+
+The default local operating window is 09:00 through 17:59. The end hour, `18`, is exclusive.
+
+Before an action begins, `createActionPolicy().begin()` checks in this order:
+
+1. `confirm` is truthy.
+2. The operation exists in the policy and has `enabled: true`.
+3. The current local hour is within `operatingHours`.
+4. The ledger's successful count for that operation and local calendar date is below `dailyLimit`.
+5. When both `page` and a `detectState` function exist, page-state detection does not return `stop: true`.
+
+Raw `createActionPolicy().begin()` uses a truthiness check; it does not enforce the boolean type. The `connect` and `message` services pass the caller's `confirm` value through, while `like` and `endorse` normalize it with `data.confirm === true`. Callers should pass the literal boolean `true` only after a person has reviewed and confirmed the exact action.
+
+A rejected gate records the rejection and throws one of these stable error codes:
+
+| Code | Meaning |
+| --- | --- |
+| `CONFIRMATION_REQUIRED` | Explicit confirmation was absent |
+| `OPERATION_DISABLED` | The operation is missing or disabled |
+| `OUTSIDE_OPERATING_HOURS` | The local hour is outside the configured window |
+| `DAILY_LIMIT_REACHED` | The successful count has reached the configured limit |
+| `PAGE_STATE_STOP` | Page-state detection requires the action to stop |
+
+Only entries with the same operation, the same local date, and `outcome: "success"` count toward a limit. Policy-gate rejections are recorded with `outcome: "rejected"`. After `begin()` returns a transaction, a standard mutation service records a subsequent interaction failure by calling `transaction.reject()`, which writes `outcome: "failed"`. Failures before `begin()`—such as navigation, profile lookup, or target verification failures, depending on the service—are outside the policy ledger. Rejected and failed entries do not increment the successful count.
+
+## Ledger boundary
+
+By default, each policy creates an in-memory ledger. Standard mutation services create a fresh default policy, and therefore a fresh ledger, for every service call when neither `data.actionPolicy` nor `cdp.actionPolicy` is supplied. Counts do not carry between those calls, even inside one process.
+
+Create one policy and inject it into each related call to share its count:
+
+```js
+const Linkout = require("linkout-scraper");
+
+const actionPolicy = Linkout.tools.createActionPolicy({
+  config: {
+    operatingHours: {start: 9, end: 18},
+    operations: {
+      connect: {enabled: true, dailyLimit: 10}
+    }
+  }
+});
+
+await Linkout.services.connect(page, {actionPolicy}, {
+  url: "https://www.linkedin.com/in/example/",
+  message: "Hello.",
+  confirm: true
+});
+```
+
+The shared ledger still resets when that policy or Node.js process is replaced. The default memory ledger is therefore not a durable daily safety control or an account-protection mechanism.
+
+Each sanitized entry contains `timestamp`, `operation`, `target`, `outcome`, `errorCode`, and, when supplied, `localDate`. A target is retained only as the origin and path of an HTTPS `www.linkedin.com` URL; query strings and fragments are removed, and other targets become an empty string. Other supplied fields are discarded. The ledger does not retain page contents, credentials, cookies, session tokens, message or connection-note bodies, or unrelated profile data.
+
+Source: [policy defaults](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/policy/defaults.js), [action-policy checks](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/policy/action-policy.js), [ledger sanitization](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/policy/ledger.js), [mutation policy selection](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/linkedin/mutation-runtime.js), [interaction checks](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/interactions/browser-input.js).
+
+## Page-state boundary
+
+The four standard mutation services pass `page` to `begin()`, and a normally created policy uses the default page-state detector. Injecting a policy can replace `detectState`, including with a non-function that skips the policy's page check.
+
+Mutation click and typing helpers also check page state by default, but their interaction options are injectable. These are useful default stop checks, not unbypassable guarantees.
+
+:::warning Platform risk
+Confirmation, hours, counts, and stop states reduce accidental execution. They do not guarantee account safety or compliance with LinkedIn rules.
+:::

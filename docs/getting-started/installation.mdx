@@ -1,0 +1,31 @@
+---
+title: Installation
+description: Install linkout-scraper and start visible local Chrome.
+---
+
+# Installation
+
+Install the public package:
+
+```bash
+npm install linkout-scraper --save
+```
+
+Start Chrome with a dedicated profile and the DevTools loopback port:
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --remote-debugging-port=9222 \
+  --window-size=1440,900 \
+  --user-data-dir="/absolute/path/to/linkout-chrome-profile"
+```
+
+Set the endpoint only when the default is unsuitable:
+
+```bash
+export LINKOUT_CHROME_URL=http://127.0.0.1:9222
+```
+
+The CLI and MCP server read `LINKOUT_CHROME_URL` automatically. Direct Node.js callers must pass it to `connectLocalChrome`, as shown in [First action](/getting-started/first-action).
+
+Linkout connects to this existing visible browser. It does not launch a hidden sign-in session.

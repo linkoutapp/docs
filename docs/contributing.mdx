@@ -1,0 +1,42 @@
+---
+title: Contributing
+description: Pull-request workflow, tests, and live read-only checks.
+---
+
+# Contributing
+
+Changes are accepted through pull requests. Use [issues](https://github.com/linkoutapp/linkout-scraper/issues) for reproducible defects or proposals and open changes against the public repository's [pull requests](https://github.com/linkoutapp/linkout-scraper/pulls).
+
+```bash
+git clone https://github.com/linkoutapp/linkout-scraper.git
+cd linkout-scraper
+npm install
+npm test
+```
+
+The package requires Node.js 22 or newer. Keep a pull request focused, include tests for behavior changes, and ensure the normal test suite passes without a live LinkedIn session.
+
+## Optional live read-only smoke test
+
+Live checks are maintainer diagnostics, excluded from CI. They require visible local Chrome on the configured macOS device, a dedicated persistent Chrome profile, manual sign-in, an open LinkedIn tab, one specific profile, and one existing message thread.
+
+Run the exact opt-in command:
+
+```bash
+LINKOUT_LIVE_READ_ONLY=1 \
+LINKOUT_LIVE_PROFILE_URL="https://www.linkedin.com/in/example/" \
+LINKOUT_LIVE_THREAD_URL="https://www.linkedin.com/messaging/thread/example/" \
+npm run test:live:read-only
+```
+
+`LINKOUT_CHROME_URL` is optional and otherwise defaults to `http://127.0.0.1:9222`.
+
+The live test must not type, click an action, send, invite, react, endorse, submit credentials, or change filters. Stop immediately at login, checkpoint, CAPTCHA, automated-activity warning, restriction, or another unexpected modal. Do not convert a live diagnostic into a mutation test.
+
+The harness intentionally reads data into process memory. It extracts profile identity, relationship status, all currently rendered connection rows, up to three messages from the supplied thread, one recent post, one recent reaction, one recent comment, and the currently loaded comments for one discovered activity item. These are real account and member data, not selector-only probes.
+
+The harness does not intentionally write page data, screenshots, or cookies to disk, but its URL inputs and extracted results remain in memory for the test process. Preserve that boundary. Never commit live URLs, browser profiles, credentials, session material, captured page data, or local ledgers.
+
+Passing the smoke test means only that the checked selectors matched then. Selectors and LinkedIn behavior can change independently of this repository, and a live pass does not establish policy compliance or account safety.
+
+Source: [package scripts](https://github.com/linkoutapp/linkout-scraper/blob/main/package.json), [live smoke-test guide](https://github.com/linkoutapp/linkout-scraper/blob/main/docs/live-smoke-tests.md), [live harness](https://github.com/linkoutapp/linkout-scraper/blob/main/test/live/read-only.smoke.js), [source guard](https://github.com/linkoutapp/linkout-scraper/blob/main/test/live/read-only-source.test.js).

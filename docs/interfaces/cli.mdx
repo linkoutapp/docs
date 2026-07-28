@@ -1,0 +1,32 @@
+---
+title: CLI
+description: Start the packaged read-only stdio MCP server.
+---
+
+# CLI
+
+The package installs one executable, `linkout-mcp`.
+
+From an installed package:
+
+```bash
+npx linkout-mcp
+```
+
+From a cloned `linkout-scraper` repository:
+
+```bash
+npm run start:mcp
+```
+
+Both commands start the same read-only MCP server over standard input and standard output. The process attaches to `LINKOUT_CHROME_URL`, or to `http://127.0.0.1:9222` when the environment variable is unset or empty.
+
+The command has no LinkedIn credential input and exposes no `connect`, `message`, `like`, or `endorse` mutation. The server can start after attaching to Chrome even when no authenticated LinkedIn tab is open. If no `www.linkedin.com` tab is open, a tool call returns `LINKEDIN_TAB_REQUIRED`. If an open LinkedIn tab is unauthenticated or shows login or checkpoint state, the server selects it and the read handler returns `PAGE_STATE_STOP`. Sign in manually and leave an authenticated LinkedIn tab open before invoking a tool.
+
+If startup fails, the command writes `Linkout MCP failed: <CODE>` to standard error and sets a non-zero exit status. It does not start a fallback browser or retry around endpoint validation.
+
+Source: [package executable mapping](https://github.com/linkoutapp/linkout-scraper/blob/main/package.json), [CLI entry point](https://github.com/linkoutapp/linkout-scraper/blob/main/bin/linkout-mcp.js), [server startup](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/mcp/server.js).
+
+:::warning Platform risk
+The read-only CLI still drives LinkedIn pages. Stop at login, checkpoint, CAPTCHA, automation warning, restriction, unknown page state, or an unexpected modal.
+:::

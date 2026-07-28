@@ -1,0 +1,47 @@
+---
+title: Safety
+description: Operational limits and safe-use boundaries.
+---
+
+# Safety
+
+Linkout runs locally in a visible browser, but it **does not guarantee account safety**, policy compliance, or future selector stability.
+
+## Authentication stays manual
+
+Start Chrome yourself, sign in yourself, and handle every login or security prompt in the visible browser. The package has no interface for submitting credentials, injecting LinkedIn cookies or session tokens, or entering an OTP. Do not add credentials, cookies, tokens, or OTP values to source, MCP arguments, logs, fixtures, or issue reports.
+
+The documented DevTools endpoint is loopback HTTP at `http://127.0.0.1:9222`. Keep it local. Linkout does not use proxies, does not default to remote DevTools, and rejects connection-time browser fingerprint override fields.
+
+## Minimize each read
+
+Use one specific LinkedIn URL and the smallest `count` that answers the question. MCP removes URL query strings and fragments before service execution and bounds supported counts to `0`–`100`, defaulting to `20`. Direct Node.js services do not inherit those checks, so direct callers must validate and minimize their own inputs.
+
+MCP returns the extracted result to its caller. Do not persist or publish profile data, connection lists, message history, or activity unless that separate use is necessary and authorized.
+
+## Mutations require explicit local policy
+
+`connect`, `message`, `like`, and `endorse` are disabled by default. Their default successful-action limits are 10, 20, 30, and 10 per operation and local date, inside the default 09:00–18:00 local window.
+
+Pass the literal boolean `true` only after a person reviews the exact action and target. This is a caller convention, not proof of human presence: raw `createActionPolicy().begin()` checks truthiness, `connect` and `message` pass the value through, and `like` and `endorse` normalize it with `=== true`.
+
+The default ledger is in memory. A successful-action count uses only `operation`, `localDate`, and `outcome: "success"`. The sanitized target URL is recorded, but target is not part of the count key, and the entry records no LinkedIn account identity.
+
+When a mutation call creates its own default policy, it also gets a fresh per-call ledger, so default calls do not aggregate counts across calls. A shared policy aggregates successful operations across every target—and across different signed-in accounts—using that policy. Even a shared memory policy resets with the object or process. Limits are therefore not durable unless a caller deliberately supplies a persistent ledger, and they are not an account-protection mechanism.
+
+## Stop states
+
+Stop when LinkedIn presents:
+
+- login
+- checkpoint or identity verification
+- CAPTCHA
+- automated-activity warning or account restriction
+- an unexpected modal
+- an unknown page state
+
+Do not retry, conceal the automation, bypass the prompt, rotate endpoints, spoof browser properties, or continue through a restriction or warning. Page-state checks depend on URL and rendered text and can be replaced or skipped by lower-level direct callers; they are useful runtime checks, not a complete safety boundary.
+
+LinkedIn selectors and platform behavior are unstable. A selector match or passing live smoke test establishes only what was visible at that time. Review visible Chrome before and after operation, and stop when the page no longer matches the expected authenticated state.
+
+Source: [README safety statement](https://github.com/linkoutapp/linkout-scraper#readme), [connection boundary](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/browser/connect-local-chrome.js), [page-state detector](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/browser/detect-page-state.js), [policy defaults](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/policy/defaults.js), [policy and memory ledger](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/policy/action-policy.js), [MCP handlers](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/mcp/handlers.js).

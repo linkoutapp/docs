@@ -1,0 +1,41 @@
+---
+title: Troubleshooting
+description: Linkout startup, MCP, read, and action error recovery.
+---
+
+# Troubleshooting
+
+Treat a stop state as a request for manual inspection, not a retry signal.
+
+| Surface | Code or symptom | Meaning | Recovery |
+| --- | --- | --- | --- |
+| MCP startup; direct `connectLocalChrome()` | `UNSUPPORTED_DEVICE` | Chrome attachment is running on a platform other than macOS. | Use the configured macOS device. |
+| MCP startup; direct Chrome connection | `INVALID_DEVTOOLS_ENDPOINT` | The DevTools value is not a parseable URL. | Set `LINKOUT_CHROME_URL` or `browserURL` to a complete URL, normally `http://127.0.0.1:9222`. |
+| MCP startup; direct Chrome connection | `REMOTE_DEVTOOLS_REJECTED` | The endpoint is not HTTP or is not loopback under the default policy. | Start local Chrome with port `9222` and use a loopback HTTP URL. Do not work around this with a remote endpoint. |
+| MCP startup; direct Chrome connection | `FINGERPRINT_OVERRIDE_REJECTED` | A connection option included `fingerprint`, `userAgent`, `locale`, `timezone`, or `viewport`. | Remove the override. Use the existing Chrome environment. |
+| MCP startup; direct Chrome connection | Puppeteer connection failure or CLI `START_FAILED` | Chrome is not reachable, the port is wrong, or startup failed without a stable Linkout code. | Confirm visible Chrome is running with `--remote-debugging-port=9222` and verify the configured URL. Restart only after correcting the connection problem. |
+| MCP read | `LINKEDIN_TAB_REQUIRED` | MCP found no existing page whose hostname is exactly `www.linkedin.com`. | Open a regular LinkedIn tab in the attached visible Chrome session. Sign in manually if needed. |
+| Direct Node mutation policy | `CONFIRMATION_REQUIRED` | The mutation policy did not receive a truthy confirmation value. | Review the exact target and action, then pass the literal boolean `true` only if a person confirms it. |
+| Direct Node mutation policy | `OPERATION_DISABLED` | The operation is absent from policy configuration or is not set to `enabled: true`. | Leave it disabled unless the action is intentionally approved; otherwise enable only that operation in the injected local policy. |
+| Direct Node mutation policy | `OUTSIDE_OPERATING_HOURS` | Local time is outside the configured half-open window. | Wait until the configured window. Do not change the clock or hours merely to force execution. |
+| Direct Node mutation policy | `DAILY_LIMIT_REACHED` | Successful entries for the operation and local date reached the policy limit. | Stop for the day. Do not replace the in-memory policy to evade the limit. |
+| MCP read; direct Node mutation checks | `PAGE_STATE_STOP` | Detection reported login, checkpoint, CAPTCHA, automation warning or restriction, unexpected modal, or unknown state. | Stop automation and inspect visible Chrome. Handle login and security controls manually. Do not retry around the state. |
+| MCP profile read; direct Node `visit` or `connect` | `PROFILE_NOT_FOUND` | A profile heading or target profile was not identified. | First inspect page state. If authenticated and unrestricted, verify the target URL and current page layout; selectors and platform behavior may have changed. Do not retry if any stop state or warning is visible. |
+| Direct Node selector resolution or mutation | `SELECTOR_NOT_FOUND` | An expected action control or requested selector was not found. | Inspect page state and the visible target before changing selectors. Do not retry if any stop state or warning is visible. |
+| MCP handler | `INVALID_LINKEDIN_URL` | A handler received the wrong scheme, host, or tool-specific path. | Use an HTTPS `www.linkedin.com` URL with the path required by that tool. |
+| MCP handler called without ordinary schema enforcement | `INVALID_COUNT` | The handler received a count outside integer `0`–`100`. | Use the smallest integer that meets the read need. Ordinary MCP schema validation rejects this before the handler. |
+| MCP read | `SERVICE_UNAVAILABLE` | The mapped read service is missing. | Check the installed package version and reinstall dependencies from a clean clone if local source was modified. |
+| MCP read | `READ_FAILED` | A non-Linkout exception occurred during a read. | Inspect the visible page and MCP stderr, then reproduce with a small read. Stop if the page is not clearly authenticated and normal. |
+| MCP read or direct Node read | Empty collection or service-shaped `{error}` | The service found no currently rendered matches; direct services return native result shapes instead of MCP envelopes. | Verify the URL and visible content. Do not increase counts or loop retries when LinkedIn shows a stop state. |
+
+## MCP validation versus runtime errors
+
+The SDK/Zod schema validates required fields, URI syntax, integer type, and the `0`–`100` range before an ordinary MCP handler runs. Those failures are MCP validation errors and do not use Linkout's `structuredContent.error` envelope.
+
+`INVALID_LINKEDIN_URL` and defensive `INVALID_COUNT` checks occur before the handler's runtime wrapper, so direct handler calls can reject rather than return an envelope. Errors caught during page selection, page-state checks, or service execution return `isError: true`, text content, and `structuredContent.error`.
+
+The CLI prints only `Linkout MCP failed: <CODE>` for startup failures. Run Chrome visibly and inspect its state rather than adding automated recovery around login, checkpoint, CAPTCHA, restriction, or warning pages.
+
+Direct Node reads do not automatically run the MCP pre-read and post-read page-state checks. Direct callers must call `detectPageState(page)` themselves and stop on `{stop: true}`.
+
+Source: [connection errors](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/browser/connect-local-chrome.js), [MCP failure handling](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/mcp/handlers.js), [MCP page selection](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/mcp/server.js), [policy gates](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/policy/action-policy.js).

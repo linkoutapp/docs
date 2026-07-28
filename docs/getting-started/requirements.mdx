@@ -1,0 +1,15 @@
+---
+title: Requirements
+description: Supported runtime, browser, and device requirements.
+---
+
+# Requirements
+
+- macOS
+- Node.js 22 or newer
+- Google Chrome
+- a dedicated local Chrome profile directory
+- an existing LinkedIn account that you sign in to manually
+- loopback access to Chrome DevTools, normally `http://127.0.0.1:9222`
+
+The current runtime rejects non-macOS devices, HTTPS DevTools endpoints, and fingerprint override fields: `fingerprint`, `userAgent`, `locale`, `timezone`, and `viewport`. It rejects non-loopback DevTools endpoints by default. Remote DevTools is outside the documented and supported workflow; do not enable it.

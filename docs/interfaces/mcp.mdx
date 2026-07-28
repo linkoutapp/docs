@@ -1,0 +1,59 @@
+---
+title: MCP
+description: Eight bounded, read-only LinkedIn tools over stdio MCP.
+---
+
+# MCP
+
+Start the installed executable:
+
+```bash
+npx linkout-mcp
+```
+
+Or start it from a cloned repository:
+
+```bash
+npm run start:mcp
+```
+
+The stdio server exposes exactly eight read-only tools:
+
+| Tool | Required input | Optional bounded input |
+| --- | --- | --- |
+| `linkedin_get_profile` | `url`: profile `/in/` URL | — |
+| `linkedin_get_connection_status` | `url`: profile `/in/` URL | — |
+| `linkedin_list_connections` | — | `count` |
+| `linkedin_read_message_thread` | `threadUrl`: `/messaging/thread/` URL | `profileUrl`: `/in/` URL; `count` |
+| `linkedin_list_posts` | `profileUrl`: `/in/` URL | `count` |
+| `linkedin_list_reactions` | `profileUrl`: `/in/` URL | `count` |
+| `linkedin_list_comments` | `profileUrl`: `/in/` URL | `count` |
+| `linkedin_list_posts_with_comments` | `activityUrl`: `/feed/update/` or `/posts/` URL | — |
+
+Where supported, `count` must be an integer from `0` through `100` and defaults to `20`. Every URL must be HTTPS on `www.linkedin.com`; the handler removes query strings and fragments after validating the tool-specific path.
+
+`linkedin_list_connections` collects the service's currently rendered connection rows, then applies `count` by slicing the response. The thread, posts, reactions, and comments handlers pass the bounded count into their service. Depending on the service, `count` caps normalized response items or acts as a polling target; it does not bound how many currently rendered matching DOM nodes the service examines.
+
+## Validation and failures
+
+The registered SDK/Zod input schema rejects non-integer or out-of-range counts and invalid URI syntax before the tool handler runs. An ordinary MCP client sees that schema or SDK validation failure, not a Linkout handler envelope.
+
+Handler-level checks then enforce Linkout-specific constraints. `boundedCount()` uses `INVALID_COUNT` defensively when a handler is called directly or schema validation is otherwise bypassed. A syntactically valid URL with a disallowed scheme, host, or tool-specific path throws `INVALID_LINKEDIN_URL`. Both checks run before the handler's `call()` runtime wrapper, so they can reject invocation instead of returning the error envelope described below.
+
+Runtime failures include:
+
+- `LINKEDIN_TAB_REQUIRED` when no existing `www.linkedin.com` tab is open
+- `PAGE_STATE_STOP` when the before-or-after read check detects a stop state
+- `SERVICE_UNAVAILABLE` when the mapped service is absent
+- a service-specific `LinkoutError` code when one is thrown
+- `READ_FAILED` for other thrown errors
+
+Failures caught by `call()` return `isError: true`, text `content`, and `structuredContent.error` with `{code, message}`. Successful handlers return text `content` and `structuredContent.result`.
+
+The MCP surface does not expose `connect`, `message`, `like`, or `endorse`. Each valid invocation that reaches service execution requires an already open `www.linkedin.com` tab and checks page state before and after the service read. It returns `PAGE_STATE_STOP` for detected login, checkpoint, CAPTCHA, automation warning or restriction, unexpected modal, and unknown states. It does not retry around a stop state.
+
+Source: [tool schemas](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/mcp/tool-definitions.js), [bounded handlers](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/mcp/handlers.js), [stdio server](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/mcp/server.js).
+
+:::warning Platform risk
+Read-only operation does not guarantee account safety, policy compliance, or selector stability. Complete authentication and security controls manually in visible Chrome.
+:::

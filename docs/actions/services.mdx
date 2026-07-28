@@ -1,0 +1,33 @@
+---
+title: Services
+description: The twelve services exported by linkout-scraper and their intent.
+---
+
+# Services
+
+`require("linkout-scraper").services` exports twelve functions.
+
+| Service | Kind | Intent |
+| --- | --- | --- |
+| `visit` | Read | Read basic identity data from one profile |
+| `connectionStatus` | Read | Read the relationship status shown for one profile |
+| `acceptedConnections` | Read | List the signed-in member's existing connections |
+| `messagesFromChat` | Read | Read messages from an existing thread |
+| `posts` | Read | Read recent profile posts |
+| `reactions` | Read | Read recent profile reaction activity |
+| `comments` | Read | Read recent profile comment activity |
+| `postsWithComments` | Read | Read one activity item with its currently loaded comments |
+| `connect` | Mutation | Send a connection request |
+| `message` | Mutation | Send a message |
+| `like` | Mutation | Like an activity item |
+| `endorse` | Mutation | Endorse a profile skill |
+
+The mutation services call the [action policy](/workflows/action-policy). With the standard defaults, the policy checks confirmation, whether the operation is enabled, local operating hours, the successful-action limit, and page state. Callers can inject policies and interaction options, so these checks are configurable behavior rather than an unbypassable account-safety boundary.
+
+Read services are not permission to mutate. Direct Node.js callers are responsible for choosing a bounded read and for stopping at login, checkpoint, CAPTCHA, automation-warning, restriction, unknown, or unexpected-modal states.
+
+Source: [public service exports](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/linkedin.service.js), [mutation runtime](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/linkedin/mutation-runtime.js).
+
+:::warning Platform risk
+Visible local execution and policy gates do not guarantee account safety, policy compliance, or selector stability. Do not work around a LinkedIn security control or restriction.
+:::

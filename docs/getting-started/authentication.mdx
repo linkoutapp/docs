@@ -1,0 +1,16 @@
+---
+title: Authentication
+description: Sign in manually and keep credentials outside Linkout.
+---
+
+# Authentication
+
+1. Start Chrome with the dedicated profile described in [Installation](/getting-started/installation).
+2. Open `https://www.linkedin.com`.
+3. Sign in to LinkedIn manually.
+4. Complete any login, checkpoint, CAPTCHA, or verification prompt yourself.
+5. Leave a normal LinkedIn tab open before running Linkout.
+
+Automation must stop on a login, checkpoint, or CAPTCHA. Finish authentication yourself in visible Chrome. Resume Linkout only after a normal authenticated LinkedIn page returns.
+
+Linkout does not accept your LinkedIn password, one-time password (OTP), cookies, or session token. Never put those values in code, environment variables, issues, logs, or prompts.

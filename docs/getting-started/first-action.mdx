@@ -1,0 +1,69 @@
+---
+title: First action
+description: Connect to visible Chrome and run an explicitly enabled connection request.
+---
+
+# First action
+
+Mutation services are disabled by default. This example enables only connection requests, limits successful requests to 10 per local day, requires an interactive human confirmation, and restricts operation to configured hours.
+
+The default ledger is in memory. The 10-success cap applies only to the current policy in the current Node.js process. Creating another policy or restarting the process resets it, so the cap is not a durable daily limit or account-safety control.
+
+```js
+const Linkout = require("linkout-scraper");
+const readline = require("node:readline/promises");
+const {stdin: input, stdout: output} = require("node:process");
+
+(async () => {
+  const prompt = readline.createInterface({input, output});
+  let browser;
+
+  try {
+    const targetUrl = "https://www.linkedin.com/in/example/";
+    const typedTarget = await prompt.question(
+      `Type the exact target profile URL to confirm:\n${targetUrl}\n> `
+    );
+    if (typedTarget.trim() !== targetUrl) {
+      throw new Error("Connection request not confirmed.");
+    }
+
+    const browserURL = process.env.LINKOUT_CHROME_URL || 'http://127.0.0.1:9222';
+    browser = await Linkout.tools.connectLocalChrome({browserURL});
+    const pages = await browser.pages();
+    const page =
+      pages.find((candidate) => candidate.url().includes("linkedin.com")) ||
+      (await browser.newPage());
+
+    await Linkout.tools.loadCursor(page);
+
+    const actionPolicy = Linkout.tools.createActionPolicy({
+      config: {
+        operatingHours: {start: 9, end: 18},
+        operations: {
+          connect: {enabled: true, dailyLimit: 10}
+        }
+      }
+    });
+
+    await Linkout.services.connect(
+      page,
+      {actionPolicy},
+      {
+        confirm: true,
+        message: "Hello.",
+        url: targetUrl
+      }
+    );
+  } finally {
+    prompt.close();
+    if (browser) await browser.disconnect();
+  }
+})().catch((error) => {
+  process.stderr.write(`${error.message}\n`);
+  process.exitCode = 1;
+});
+```
+
+Replace `targetUrl` with the intended profile before running the script. The script calls `connect` only after you type that exact URL. The `confirm: true` value is supplied by the caller; it does not display a prompt by itself.
+
+The action policy stops the request when confirmation is absent, `connect` is disabled, the current time is outside 9:00–18:00, the in-memory limit is reached, or the page reports a stop state. Do not work around a login, checkpoint, CAPTCHA, automation warning, restriction, unknown page state, or unexpected modal. `browser.disconnect()` detaches Linkout without closing your Chrome session.

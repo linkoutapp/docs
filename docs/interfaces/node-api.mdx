@@ -1,0 +1,70 @@
+---
+title: Node API
+description: CommonJS service and tool exports from linkout-scraper.
+---
+
+# Node API
+
+Load the CommonJS entry module:
+
+```js
+const Linkout = require("linkout-scraper");
+```
+
+It exports two namespaces: `Linkout.services` and `Linkout.tools`. The twelve service names and their intent are listed under [Services](/actions/services).
+
+## Tools
+
+| Tool | Input and defaults | Result | Notable errors |
+| --- | --- | --- | --- |
+| `connectLocalChrome(options)` | `browserURL` defaults to `http://127.0.0.1:9222`; `platform` defaults to the current platform; `allowRemote` defaults to `false` | Connected Puppeteer browser | `UNSUPPORTED_DEVICE`, `INVALID_DEVTOOLS_ENDPOINT`, `REMOTE_DEVTOOLS_REJECTED`, `FINGERPRINT_OVERRIDE_REJECTED`, Puppeteer connection errors |
+| `validateDevtoolsEndpoint(value, options)` | Endpoint value; optional `allowRemote: false` | Sanitized `URL` object | `INVALID_DEVTOOLS_ENDPOINT`, `REMOTE_DEVTOOLS_REJECTED` |
+| `createActionPolicy(options)` | Optional `config`, `ledger`, `clock`, and `detectState`; defaults to disabled operations, a memory ledger, the current local time, and standard page-state detection | `{begin, config, ledger}` | `begin()` emits the five [policy codes](/workflows/action-policy) |
+| `detectPageState(page)` | Puppeteer page | `{state, stop}` | Page evaluation errors |
+| `resolveSelector(page, options)` | Required non-empty `candidates`; `timeout: 10000`, `interval: 250`, `visible: false`, `allowOffscreen: false`; also accepts `workflow` and `name` | `{context, selector, handle}` | `TypeError` for empty candidates; `SELECTOR_NOT_FOUND` |
+| `loadCursor(page)` | Puppeteer page | `Promise<void>`; sets `page.cursor` | Cursor creation errors |
+
+`connectLocalChrome()` requires macOS and attaches with Puppeteer's `defaultViewport: null`, preserving the existing Chrome viewport instead of emulating one. Direct Node.js callers must pass `browserURL` themselves if they want to use `LINKOUT_CHROME_URL`.
+
+Endpoint validation requires HTTP. Loopback hosts are required unless `allowRemote: true` is passed, but remote DevTools is outside the documented and supported workflow. The connection function rejects `fingerprint`, `userAgent`, `locale`, `timezone`, and `viewport` options even when remote access is allowed. Endpoint credentials, query parameters, and fragments are stripped before connection.
+
+`resolveSelector` takes the options object shown above, not a selector-name string. `loadCursor(page)` attaches a ghost-cursor instance. The standard mutation helper requires it by default for top-level clicks; child-frame clicks use native coordinates, typing does not require the cursor, and callers can override `requireCursor`.
+
+## Service call shape
+
+Most services follow the `(page, cdp, data)` convention; `acceptedConnections(page)` is the exception. For example:
+
+```js
+const result = await Linkout.services.visit(page, null, {
+  url: "https://www.linkedin.com/in/example/"
+});
+```
+
+All exported service calls are promises. Required fields below are implementation requirements; direct services do not validate them with MCP schemas.
+
+| Service call | `data` fields and defaults | High-level result | Notable errors |
+| --- | --- | --- | --- |
+| `visit(page, cdp, data)` | Required `url` | `{profileData: {fullName, firstName, lastName}}` | `PROFILE_NOT_FOUND`; navigation errors |
+| `connectionStatus(page, cdp, data)` | Required `user` profile URL | `"Connected"`, `"Pending"`, or `"Not connected"` | Navigation/evaluation errors |
+| `acceptedConnections(page)` | No data fields | `[{name, url}]` from currently rendered rows | Navigation/evaluation errors |
+| `messagesFromChat(page, cdp, data)` | Required `user`; `count: 20`, `timeout: 10000`, `pollInterval: 250` | `{name, img, link, values: [{time, from, message}]}` or `{error}` when no message root is found | Navigation/evaluation errors |
+| `posts(page, cdp, data)` | Required `user`; `count: 2` | `[{type, post, link, comments, date}]` | Navigation/evaluation errors |
+| `reactions(page, cdp, data)` | Required `user`; `count: 5` | `{name, link, values: [{url, reaction, date}]}` | Navigation/evaluation errors |
+| `comments(page, cdp, data)` | Required `user`; `count: 5` | `{name, link, values: [{url, comments}]}` | Navigation/evaluation errors |
+| `postsWithComments(page, cdp, data)` | Required `url`; optional `date` | One post-shaped object, or `{link, comments: []}` | Navigation/evaluation errors |
+| `connect(page, cdp, data)` | Required `url`; `confirm: false`; optional `message`, policy and interaction options | `{status: "sent", profileData}` | Policy codes, `PROFILE_NOT_FOUND`, `SELECTOR_NOT_FOUND`, interaction errors |
+| `message(page, cdp, data)` | Required `url`; `confirm: false`; optional `message`, policy and interaction options | `{status: "sent", profileData}` | Policy codes, `TARGET_PROFILE_NOT_VERIFIED`, `AMBIGUOUS_COMPOSE_CONTROL`, `SENT_STATE_NOT_VERIFIED`, `PAGE_STATE_STOP` |
+| `like(page, cdp, data)` | Required profile `url`; confirmation is normalized with `=== true`; optional policy and interaction options | `{status: "completed", url}` | Policy codes, `SELECTOR_NOT_FOUND`, interaction errors |
+| `endorse(page, cdp, data)` | Required profile `url`; confirmation is normalized with `=== true`; optional policy and interaction options | `{status: "completed", url}` | Policy codes, `SELECTOR_NOT_FOUND`, `ENDORSEMENT_TARGET_NOT_IDENTIFIED`, `ENDORSEMENT_NOT_VERIFIED` |
+
+For mutation services, `cdp.actionPolicy` or `data.actionPolicy` shares a policy; `data.actionPolicy` takes precedence. Without either, each call creates a fresh default policy and memory ledger.
+
+## Direct API versus MCP
+
+Direct Node.js service calls do not inherit MCP's LinkedIn URL validation, `count` range validation, before-and-after read page-state checks, or structured success/error envelopes. Direct services therefore receive unchecked counts and URLs that MCP would reject, and they return or throw their native values and errors. Validate inputs, call `detectPageState(page)` before and after direct reads, and stop when it returns `{stop: true}`.
+
+Source: [entry exports](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/linkedin.service.js), [Chrome connection](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/browser/connect-local-chrome.js), [selector resolver](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/helpers/find-page-context.js), [cursor loader](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/helpers/load-cursor.js), [MCP handlers](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/mcp/handlers.js).
+
+:::warning Platform risk
+Local attachment, a visible browser, and page-state checks do not guarantee account safety or selector stability.
+:::

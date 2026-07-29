@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
@@ -19,6 +20,19 @@ const checkoutAction =
   'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803';
 const setupNodeAction =
   'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38';
+const pushDiffScript = [
+  'before="${{ github.event.before }}"',
+  'after="${{ github.sha }}"',
+  'empty_tree="$(git hash-object -t tree -w /dev/null)"',
+  'if [ "$before" = "0000000000000000000000000000000000000000" ] ||',
+  '  ! git cat-file -e "$before^{commit}" 2>/dev/null',
+  'then',
+  '  git diff --check "$empty_tree" "$after"',
+  'else',
+  '  git diff --check "$before..$after"',
+  'fi',
+  '',
+].join('\n');
 
 function parseWorkflow(source, label = 'workflow') {
   try {
@@ -34,13 +48,15 @@ function parseWorkflow(source, label = 'workflow') {
 }
 
 function assertWorkflow(source, expected, label) {
-  assert.deepEqual(parseWorkflow(source, label), expected);
+  const parsed = parseWorkflow(source, label);
+  assert.deepEqual(parsed, expected);
+  return parsed;
 }
 
 test('CI is a read-only main and pull-request repository gate', () => {
   const source = read('.github/workflows/ci.yml');
 
-  assertWorkflow(source, {
+  const workflow = assertWorkflow(source, {
     name: 'CI',
     on: {
       pull_request: null,
@@ -69,7 +85,7 @@ test('CI is a read-only main and pull-request repository gate', () => {
           {
             name: 'Check push diff',
             if: "github.event_name == 'push'",
-            run: 'git diff --check "${{ github.event.before }}..${{ github.sha }}"',
+            run: pushDiffScript,
           },
           {
             name: 'Set up Node.js',
@@ -94,6 +110,17 @@ test('CI is a read-only main and pull-request repository gate', () => {
     source,
     /uses:\s*actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38\s+# v6/,
   );
+  const pushRun = workflow.jobs.check.steps[2].run;
+  assert.match(
+    pushRun,
+    /\[ "\$before" = "0000000000000000000000000000000000000000" \]/,
+  );
+  assert.match(
+    pushRun,
+    /! git cat-file -e "\$before\^\{commit\}" 2>\/dev\/null/,
+  );
+  assert.match(pushRun, /git diff --check "\$empty_tree" "\$after"/);
+  assert.match(pushRun, /git diff --check "\$before\.\.\$after"/);
 });
 
 test('deployment health is manual-only and runs the deploy check', () => {
@@ -156,6 +183,44 @@ test('workflow contracts reject malformed YAML and misplaced commands', () => {
       ),
     assert.AssertionError,
   );
+});
+
+test('push diff fallback checks the current commit from the empty tree', (t) => {
+  const repository = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'linkout-push-diff-'),
+  );
+  t.after(() => fs.rmSync(repository, {recursive: true, force: true}));
+
+  const git = (...args) =>
+    execFileSync('git', args, {cwd: repository, encoding: 'utf8'}).trim();
+  git('init', '--quiet');
+  git('config', 'user.name', 'Linkout CI');
+  git('config', 'user.email', 'ci@linkout.space');
+  fs.writeFileSync(path.join(repository, 'fixture.txt'), 'clean\n');
+  git('add', 'fixture.txt');
+  git('commit', '--quiet', '-m', 'Initial');
+  fs.writeFileSync(path.join(repository, 'fixture.txt'), 'trailing whitespace \n');
+  git('add', 'fixture.txt');
+  git('commit', '--quiet', '-m', 'Introduce whitespace');
+  const after = git('rev-parse', 'HEAD');
+  const script = pushDiffScript
+    .replace('${{ github.event.before }}', '${BEFORE}')
+    .replace('${{ github.sha }}', '${AFTER}');
+
+  for (const before of [
+    '0000000000000000000000000000000000000000',
+    '1111111111111111111111111111111111111111',
+  ]) {
+    assert.throws(
+      () =>
+        execFileSync('sh', ['-eu', '-c', script], {
+          cwd: repository,
+          env: {...process.env, AFTER: after, BEFORE: before},
+          stdio: 'pipe',
+        }),
+      {status: 2},
+    );
+  }
 });
 
 test('repository checks compose each expensive local gate once', () => {

@@ -14,6 +14,34 @@ function read(relativePath) {
   return fs.readFileSync(path.join(repositoryRoot, relativePath), 'utf8');
 }
 
+function mappingBlock(source, key, indentation = 0) {
+  const prefix = ' '.repeat(indentation);
+  const lines = source.split(/\r?\n/);
+  const start = lines.findIndex((line) => line === `${prefix}${key}:`);
+
+  assert.notEqual(start, -1, `Expected ${key} mapping`);
+
+  const block = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line && !line.startsWith(`${prefix} `)) {
+      break;
+    }
+    block.push(line);
+  }
+  return block.join('\n');
+}
+
+function mappingKeys(source, indentation) {
+  const prefix = ' '.repeat(indentation);
+  return source
+    .split(/\r?\n/)
+    .map((line) =>
+      line.match(new RegExp(`^${prefix}([^\\s:#][^:]*):(?:\\s.*)?$`)),
+    )
+    .filter(Boolean)
+    .map((match) => match[1]);
+}
+
 function workflow(relativePath) {
   const source = read(relativePath);
   const permissions = source.match(
@@ -36,17 +64,20 @@ function workflow(relativePath) {
 
 test('CI is a read-only main and pull-request repository gate', () => {
   const source = workflow('.github/workflows/ci.yml');
-  const trigger = source.match(
-    /^on:\s*\n([\s\S]*?)(?=^permissions:)/m,
-  )?.[1];
+  const trigger = mappingBlock(source, 'on');
+  const push = mappingBlock(trigger, 'push', 2);
+  const branches = mappingBlock(push, 'branches', 4);
 
-  assert.ok(trigger);
-  assert.match(trigger, /^\s{2}pull_request:\s*$/m);
-  assert.match(
-    trigger,
-    /^\s{2}push:\s*\n\s{4}branches:\s*\n\s{6}- main\s*$/m,
+  assert.deepEqual(mappingKeys(trigger, 2), ['pull_request', 'push']);
+  assert.equal(mappingBlock(trigger, 'pull_request', 2).trim(), '');
+  assert.deepEqual(mappingKeys(push, 4), ['branches']);
+  assert.deepEqual(
+    branches
+      .split(/\r?\n/)
+      .map((line) => line.match(/^\s{6}-\s+(.+?)\s*$/)?.[1])
+      .filter(Boolean),
+    ['main'],
   );
-  assert.doesNotMatch(trigger, /^\s{2}(?:schedule|workflow_dispatch):/m);
   assert.match(
     source,
     /^concurrency:\s*\n\s{2}group:\s*\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\s*\n\s{2}cancel-in-progress:\s*true\s*$/m,
@@ -58,15 +89,10 @@ test('CI is a read-only main and pull-request repository gate', () => {
 
 test('deployment health is manual-only and runs the deploy check', () => {
   const source = workflow('.github/workflows/deployment-health.yml');
-  const trigger = source.match(
-    /^on:\s*\n([\s\S]*?)(?=^permissions:)/m,
-  )?.[1];
+  const trigger = mappingBlock(source, 'on');
 
-  assert.equal(trigger?.trim(), 'workflow_dispatch:');
-  assert.doesNotMatch(
-    trigger ?? '',
-    /^\s{2}(?:schedule|push|pull_request):/m,
-  );
+  assert.deepEqual(mappingKeys(trigger, 2), ['workflow_dispatch']);
+  assert.equal(mappingBlock(trigger, 'workflow_dispatch', 2).trim(), '');
   assert.match(source, /^\s+runs-on:\s*ubuntu-latest\s*$/m);
   assert.match(source, /run:\s*npm run check:deploy\s*$/m);
   assert.doesNotMatch(source, /run:\s*npm run check\s*$/m);
@@ -147,6 +173,16 @@ test('package metadata and the standard MIT license agree', () => {
   );
 });
 
+test('Docusaurus keeps the dynamic Linkout MIT footer copyright', () => {
+  const config = read('docusaurus.config.ts');
+
+  assert.ok(
+    config.includes(
+      'copyright: `Copyright © ${new Date().getFullYear()} Linkout. MIT License.`,',
+    ),
+  );
+});
+
 test('README documents public operation and ownership', () => {
   const readme = read('README.md');
 
@@ -172,6 +208,14 @@ test('README documents public operation and ownership', () => {
   assert.match(readme, /accepted only through pull requests/i);
   assert.match(readme, /manual[\s\S]*deployment health/i);
   assert.match(readme, /TLS/i);
+  assert.match(
+    readme,
+    /public\s+`linkoutapp\/linkout-scraper` repository's `main` branch/i,
+  );
+  assert.match(
+    readme,
+    /Linkout owns and operates the Vercel deployment for `docs\.linkout\.space`/,
+  );
 });
 
 test('internal superpowers planning artifacts are not tracked', () => {

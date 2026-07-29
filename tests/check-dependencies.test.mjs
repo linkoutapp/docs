@@ -1,7 +1,133 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import test from "node:test";
 
-import { runDependencyChecks } from "../scripts/check-dependencies.mjs";
+import {
+  createNpmRunner,
+  runDependencyChecks,
+} from "../scripts/check-dependencies.mjs";
+
+function fakeChild({ code = 0, stderr = "", stdout = "" } = {}) {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.kill = () => true;
+  queueMicrotask(() => {
+    if (stdout) child.stdout.write(stdout);
+    if (stderr) child.stderr.write(stderr);
+    child.emit("close", code, null);
+  });
+  return child;
+}
+
+for (const [platform, executable] of [
+  ["darwin", "npm"],
+  ["win32", "npm.cmd"],
+]) {
+  test(`real launcher uses ${executable} without a shell on ${platform}`, async () => {
+    const launches = [];
+    const runCommand = createNpmRunner({
+      platform,
+      spawnImpl: (command, args, options) => {
+        launches.push({ command, args, options });
+        return fakeChild();
+      },
+      stderr: { write() {} },
+      stdout: { write() {} },
+    });
+
+    await runCommand(["audit", "--omit=dev"]);
+
+    assert.deepEqual(launches, [
+      {
+        command: executable,
+        args: ["audit", "--omit=dev"],
+        options: {
+          shell: false,
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      },
+    ]);
+  });
+}
+
+test("real launcher kills and retries a stalled audit attempt", async () => {
+  let auditAttempts = 0;
+  const launches = [];
+  const killed = [];
+  const timeoutCalls = [];
+
+  await runDependencyChecks({
+    runnerOptions: {
+      platform: "linux",
+      spawnImpl: (_command, args) => {
+        launches.push(args);
+        if (args[0] !== "audit") {
+          return fakeChild();
+        }
+        auditAttempts += 1;
+        if (auditAttempts > 1) return fakeChild();
+
+        const child = new EventEmitter();
+        child.stdout = new PassThrough();
+        child.stderr = new PassThrough();
+        child.kill = (signal) => {
+          killed.push(signal);
+          queueMicrotask(() => child.emit("close", null, signal));
+          return true;
+        };
+        return child;
+      },
+      setTimer: (callback, timeoutMs) => {
+        timeoutCalls.push(timeoutMs);
+        const timer = { active: true };
+        queueMicrotask(() => {
+          if (timer.active) callback();
+        });
+        return timer;
+      },
+      clearTimer(timer) {
+        timer.active = false;
+      },
+      stderr: { write() {} },
+      stdout: { write() {} },
+    },
+    sleep: async () => {},
+  });
+
+  assert.deepEqual(
+    launches.map((args) => args[0]),
+    ["ls", "audit", "audit"]
+  );
+  assert.deepEqual(killed, ["SIGKILL"]);
+  assert.deepEqual(timeoutCalls, [15_000, 15_000, 15_000]);
+});
+
+test("real launcher preserves subprocess output and nonzero exit code", async () => {
+  const written = { stderr: "", stdout: "" };
+  const runCommand = createNpmRunner({
+    spawnImpl: () =>
+      fakeChild({
+        code: 1,
+        stdout: "audit report\n",
+        stderr: "vulnerabilities found\n",
+      }),
+    stderr: { write: (chunk) => (written.stderr += chunk) },
+    stdout: { write: (chunk) => (written.stdout += chunk) },
+  });
+
+  await assert.rejects(runCommand(["audit", "--omit=dev"]), (error) => {
+    assert.equal(error.code, 1);
+    assert.equal(error.stdout, "audit report\n");
+    assert.equal(error.stderr, "vulnerabilities found\n");
+    return true;
+  });
+  assert.deepEqual(written, {
+    stdout: "audit report\n",
+    stderr: "vulnerabilities found\n",
+  });
+});
 
 test("validates the existing dependency tree before auditing production dependencies", async () => {
   const commands = [];

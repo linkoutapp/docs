@@ -69,18 +69,24 @@ test("fails clearly when fetch returns a malformed response", async () => {
 });
 
 test("preserves the 15 second timeout for every attempt", async () => {
+  let attempts = 0;
+  const signals = [];
   const timeoutCalls = [];
 
   await fetchSourceText("README.md", {
     fetchImpl: async (_url, options) => {
-      assert.equal(options.signal, "timeout-15000");
+      signals.push(options.signal);
+      attempts += 1;
+      if (attempts === 1) throw new TypeError("fetch failed");
       return response(200);
     },
     timeoutSignal: (timeoutMs) => {
       timeoutCalls.push(timeoutMs);
-      return `timeout-${timeoutMs}`;
+      return { timeoutMs };
     },
+    sleep: async () => {},
   });
 
-  assert.deepEqual(timeoutCalls, [15_000]);
+  assert.deepEqual(timeoutCalls, [15_000, 15_000]);
+  assert.notEqual(signals[0], signals[1]);
 });

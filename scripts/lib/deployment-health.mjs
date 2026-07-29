@@ -193,7 +193,7 @@ function hasCanonicalLink(node) {
     const attributes = new Map(
       (node.attrs || []).map(({ name, value }) => [name, value])
     );
-    const relTokens = (attributes.get("rel") || "").split(/\s+/);
+    const relTokens = (attributes.get("rel") || "").split(/[ \t\n\f\r]+/);
     if (
       relTokens.some((token) => token.toLowerCase() === "canonical") &&
       attributes.get("href") === REQUIRED_CANONICAL

@@ -291,6 +291,35 @@ for (const validCanonical of [
   });
 }
 
+test("rejects a canonical rel lookalike separated by non-ASCII whitespace", async () => {
+  await assert.rejects(
+    checkDeployment({
+      ...healthyDependencies({
+        request: async () => ({
+          body:
+            '<html><head><link rel="stylesheet\u00a0canonical" href="https://docs.linkout.space/"></head></html>',
+          statusCode: 200,
+        }),
+      }),
+    }),
+    /\/: missing canonical https:\/\/docs\.linkout\.space\//
+  );
+});
+
+test("accepts canonical rel tokens separated by HTML ASCII whitespace", async () => {
+  await checkDeployment({
+    ...healthyDependencies({
+      request: async (url) => ({
+        body:
+          url.pathname === "/"
+            ? '<html><head><link rel="stylesheet\talternate\ncanonical\fhelp\rnext" href="https://docs.linkout.space/"></head></html>'
+            : "ok",
+        statusCode: 200,
+      }),
+    }),
+  });
+});
+
 test("enforces an absolute HTTPS response deadline during slow-drip data", async () => {
   const { request, response } = fakeHttpsExchange();
   let deadline;

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { fetchSourceText } from "./lib/source-fetch.mjs";
 
 const RAW_BASE =
   "https://raw.githubusercontent.com/linkoutapp/linkout-scraper/main";
@@ -47,23 +48,10 @@ function parseJson(path, source) {
 }
 
 async function read(path) {
-  let response;
-  try {
-    response = await fetch(`${RAW_BASE}/${path}`, {
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    });
-  } catch (error) {
-    throw new Error(
-      diagnostic(path, `fetch failed (${error.code || error.message})`),
-      { cause: error }
-    );
-  }
-  assert.equal(
-    response.ok,
-    true,
-    diagnostic(path, `fetch returned HTTP ${response.status}`)
-  );
-  return response.text();
+  return fetchSourceText(path, {
+    baseUrl: RAW_BASE,
+    timeoutMs: FETCH_TIMEOUT_MS,
+  });
 }
 
 async function readAll(requestedPaths, concurrency = FETCH_CONCURRENCY) {

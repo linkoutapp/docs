@@ -136,7 +136,7 @@ test('patched transitive dependencies are explicitly scoped', () => {
   );
   assert.equal(
     packageJson.scripts?.['check:deps'],
-    'npm ls brace-expansion serialize-javascript uuid --all --silent && npm audit --omit=dev',
+    'node scripts/check-dependencies.mjs',
   );
 });
 

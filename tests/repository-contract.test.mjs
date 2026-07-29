@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {load as loadYaml} from 'js-yaml';
 
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -14,93 +15,153 @@ function read(relativePath) {
   return fs.readFileSync(path.join(repositoryRoot, relativePath), 'utf8');
 }
 
-function mappingBlock(source, key, indentation = 0) {
-  const prefix = ' '.repeat(indentation);
-  const lines = source.split(/\r?\n/);
-  const start = lines.findIndex((line) => line === `${prefix}${key}:`);
+const checkoutAction =
+  'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803';
+const setupNodeAction =
+  'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38';
 
-  assert.notEqual(start, -1, `Expected ${key} mapping`);
-
-  const block = [];
-  for (const line of lines.slice(start + 1)) {
-    if (line && !line.startsWith(`${prefix} `)) {
-      break;
-    }
-    block.push(line);
+function parseWorkflow(source, label = 'workflow') {
+  try {
+    const parsed = loadYaml(source);
+    assert.ok(
+      parsed && typeof parsed === 'object' && !Array.isArray(parsed),
+      `${label} must be a YAML mapping`,
+    );
+    return parsed;
+  } catch (error) {
+    throw new Error(`${label} must contain valid workflow YAML`, {cause: error});
   }
-  return block.join('\n');
 }
 
-function mappingKeys(source, indentation) {
-  const prefix = ' '.repeat(indentation);
-  return source
-    .split(/\r?\n/)
-    .map((line) =>
-      line.match(new RegExp(`^${prefix}([^\\s:#][^:]*):(?:\\s.*)?$`)),
-    )
-    .filter(Boolean)
-    .map((match) => match[1]);
-}
-
-function workflow(relativePath) {
-  const source = read(relativePath);
-  const permissions = source.match(
-    /^permissions:\s*\n((?:^[ \t]+.*\n?)*)/m,
-  )?.[1];
-
-  assert.equal(permissions?.trim(), 'contents: read');
-  assert.doesNotMatch(source, /\b(?:write-all|[a-z-]+:\s*write)\b/);
-  assert.doesNotMatch(source, /\bsecrets\b/i);
-  assert.match(source, /uses:\s*actions\/checkout@v6\b/);
-  assert.match(source, /uses:\s*actions\/setup-node@v6\b/);
-  assert.match(source, /node-version:\s*['"]?22['"]?\s*$/m);
-  assert.match(source, /cache:\s*npm\s*$/m);
-  assert.match(source, /cache-dependency-path:\s*package-lock\.json\s*$/m);
-  assert.match(source, /run:\s*npm ci --ignore-scripts\s*$/m);
-  assert.match(source, /^\s+timeout-minutes:\s*(?:[1-9]|[1-5]\d|60)\s*$/m);
-
-  return source;
+function assertWorkflow(source, expected, label) {
+  assert.deepEqual(parseWorkflow(source, label), expected);
 }
 
 test('CI is a read-only main and pull-request repository gate', () => {
-  const source = workflow('.github/workflows/ci.yml');
-  const trigger = mappingBlock(source, 'on');
-  const push = mappingBlock(trigger, 'push', 2);
-  const branches = mappingBlock(push, 'branches', 4);
+  const source = read('.github/workflows/ci.yml');
 
-  assert.deepEqual(mappingKeys(trigger, 2), ['pull_request', 'push']);
-  assert.equal(mappingBlock(trigger, 'pull_request', 2).trim(), '');
-  assert.deepEqual(mappingKeys(push, 4), ['branches']);
-  assert.deepEqual(
-    branches
-      .split(/\r?\n/)
-      .map((line) => line.match(/^\s{6}-\s+(.+?)\s*$/)?.[1])
-      .filter(Boolean),
-    ['main'],
+  assertWorkflow(source, {
+    name: 'CI',
+    on: {
+      pull_request: null,
+      push: {branches: ['main']},
+    },
+    permissions: {contents: 'read'},
+    concurrency: {
+      group: '${{ github.workflow }}-${{ github.ref }}',
+      'cancel-in-progress': true,
+    },
+    jobs: {
+      check: {
+        'runs-on': 'ubuntu-latest',
+        'timeout-minutes': 20,
+        steps: [
+          {
+            name: 'Check out repository',
+            uses: checkoutAction,
+            with: {'fetch-depth': 0, 'persist-credentials': false},
+          },
+          {
+            name: 'Check pull request diff',
+            if: "github.event_name == 'pull_request'",
+            run: 'git diff --check "${{ github.event.pull_request.base.sha }}...${{ github.sha }}"',
+          },
+          {
+            name: 'Check push diff',
+            if: "github.event_name == 'push'",
+            run: 'git diff --check "${{ github.event.before }}..${{ github.sha }}"',
+          },
+          {
+            name: 'Set up Node.js',
+            uses: setupNodeAction,
+            with: {
+              'node-version': 22,
+              cache: 'npm',
+              'cache-dependency-path': 'package-lock.json',
+            },
+          },
+          {name: 'Install dependencies', run: 'npm ci --ignore-scripts'},
+          {name: 'Check repository', run: 'npm run check'},
+        ],
+      },
+    },
+  }, 'CI workflow');
+  assert.match(
+    source,
+    /uses:\s*actions\/checkout@d23441a48e516b6c34aea4fa41551a30e30af803\s+# v6/,
   );
   assert.match(
     source,
-    /^concurrency:\s*\n\s{2}group:\s*\$\{\{ github\.workflow \}\}-\$\{\{ github\.ref \}\}\s*\n\s{2}cancel-in-progress:\s*true\s*$/m,
+    /uses:\s*actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38\s+# v6/,
   );
-  assert.match(source, /^\s+runs-on:\s*ubuntu-latest\s*$/m);
-  assert.match(source, /run:\s*npm run check\s*$/m);
-  assert.doesNotMatch(source, /run:\s*npm run check:deploy\s*$/m);
 });
 
 test('deployment health is manual-only and runs the deploy check', () => {
-  const source = workflow('.github/workflows/deployment-health.yml');
-  const trigger = mappingBlock(source, 'on');
+  const source = read('.github/workflows/deployment-health.yml');
 
-  assert.deepEqual(mappingKeys(trigger, 2), ['workflow_dispatch']);
-  assert.equal(mappingBlock(trigger, 'workflow_dispatch', 2).trim(), '');
-  assert.match(source, /^\s+runs-on:\s*ubuntu-latest\s*$/m);
-  assert.match(source, /run:\s*npm run check:deploy\s*$/m);
-  assert.doesNotMatch(source, /run:\s*npm run check\s*$/m);
+  assertWorkflow(source, {
+    name: 'Deployment health',
+    on: {workflow_dispatch: null},
+    permissions: {contents: 'read'},
+    jobs: {
+      'deployment-health': {
+        'runs-on': 'ubuntu-latest',
+        'timeout-minutes': 10,
+        steps: [
+          {
+            name: 'Check out repository',
+            uses: checkoutAction,
+            with: {'persist-credentials': false},
+          },
+          {
+            name: 'Set up Node.js',
+            uses: setupNodeAction,
+            with: {
+              'node-version': 22,
+              cache: 'npm',
+              'cache-dependency-path': 'package-lock.json',
+            },
+          },
+          {name: 'Install dependencies', run: 'npm ci --ignore-scripts'},
+          {name: 'Check deployment', run: 'npm run check:deploy'},
+        ],
+      },
+    },
+  }, 'deployment workflow');
+  assert.match(
+    source,
+    /uses:\s*actions\/checkout@d23441a48e516b6c34aea4fa41551a30e30af803\s+# v6/,
+  );
+  assert.match(
+    source,
+    /uses:\s*actions\/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38\s+# v6/,
+  );
+});
+
+test('workflow contracts reject malformed YAML and misplaced commands', () => {
+  assert.throws(
+    () => parseWorkflow('on:\n  push: [', 'broken workflow'),
+    /broken workflow must contain valid workflow YAML/,
+  );
+  assert.throws(
+    () =>
+      assertWorkflow(
+        'name: Example\non:\n  push:\njobs:\n  check:\n    run: npm test\n',
+        {
+          name: 'Example',
+          on: {push: null},
+          jobs: {check: {steps: [{run: 'npm test'}]}},
+        },
+        'misplaced command workflow',
+      ),
+    assert.AssertionError,
+  );
 });
 
 test('repository checks compose each expensive local gate once', () => {
   const packageJson = JSON.parse(read('package.json'));
 
+  assert.equal(packageJson.devDependencies?.['js-yaml'], '4.3.0');
   assert.equal(
     packageJson.scripts?.['check:local'],
     'git diff --check && npm run typecheck && npm test && npm run build',
@@ -203,6 +264,7 @@ test('README documents public operation and ownership', () => {
     assert.ok(readme.includes(required), `README must include ${required}`);
   }
   assert.match(readme, /live source contracts?/i);
+  assert.match(readme, /check:local` checks the working-tree diff/i);
   assert.match(readme, /retr(?:y|ies)/i);
   assert.match(readme, /drift[\s\S]*fail/i);
   assert.match(readme, /accepted only through pull requests/i);

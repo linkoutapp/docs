@@ -16,7 +16,8 @@ site locally, run `npm run build` followed by `npm run serve`.
 
 ## Checks
 
-- `npm run check:local` checks the diff, types, tests, and production build.
+- `npm run check:local` checks the working-tree diff, types, tests, and
+  production build.
 - `npm run check:source` checks live source contracts against the public
   `linkout-scraper` repository.
 - `npm run check:deps` checks the patched dependency tree and production audit.

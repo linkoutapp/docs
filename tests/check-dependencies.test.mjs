@@ -21,13 +21,12 @@ function fakeChild({ code = 0, stderr = "", stdout = "" } = {}) {
   return child;
 }
 
-for (const [platform, executable] of [
-  ["darwin", "npm"],
-  ["win32", "npm.cmd"],
-]) {
-  test(`real launcher uses ${executable} without a shell on ${platform}`, async () => {
+for (const platform of ["darwin", "win32"]) {
+  test(`real launcher uses Node and npm_execpath on ${platform}`, async () => {
     const launches = [];
     const runCommand = createNpmRunner({
+      environment: { npm_execpath: "/opt/npm/bin/npm-cli.js" },
+      nodeExecutable: "/opt/node/bin/node",
       platform,
       spawnImpl: (command, args, options) => {
         launches.push({ command, args, options });
@@ -41,8 +40,8 @@ for (const [platform, executable] of [
 
     assert.deepEqual(launches, [
       {
-        command: executable,
-        args: ["audit", "--omit=dev"],
+        command: "/opt/node/bin/node",
+        args: ["/opt/npm/bin/npm-cli.js", "audit", "--omit=dev"],
         options: {
           shell: false,
           stdio: ["ignore", "pipe", "pipe"],
@@ -52,6 +51,75 @@ for (const [platform, executable] of [
   });
 }
 
+test("real launcher falls back to the npm executable on POSIX", async () => {
+  const launches = [];
+  const runCommand = createNpmRunner({
+    environment: {},
+    platform: "linux",
+    spawnImpl: (command, args, options) => {
+      launches.push({ command, args, options });
+      return fakeChild();
+    },
+    stderr: { write() {} },
+    stdout: { write() {} },
+  });
+
+  await runCommand(["audit", "--omit=dev"]);
+
+  assert.deepEqual(launches, [
+    {
+      command: "npm",
+      args: ["audit", "--omit=dev"],
+      options: {
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    },
+  ]);
+});
+
+test("real launcher uses ComSpec with a controlled command on Windows fallback", async () => {
+  const launches = [];
+  const runCommand = createNpmRunner({
+    environment: { ComSpec: "C:\\Windows\\System32\\cmd.exe" },
+    platform: "win32",
+    spawnImpl: (command, args, options) => {
+      launches.push({ command, args, options });
+      return fakeChild();
+    },
+    stderr: { write() {} },
+    stdout: { write() {} },
+  });
+
+  await runCommand(["audit", "--omit=dev"]);
+
+  assert.deepEqual(launches, [
+    {
+      command: "C:\\Windows\\System32\\cmd.exe",
+      args: ["/d", "/s", "/c", "npm.cmd audit --omit=dev"],
+      options: {
+        shell: false,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    },
+  ]);
+});
+
+test("Windows fallback rejects npm arguments outside the controlled checks", () => {
+  const runCommand = createNpmRunner({
+    environment: {},
+    platform: "win32",
+    spawnImpl: () => {
+      assert.fail("must not spawn an unapproved Windows command");
+    },
+  });
+
+  assert.throws(
+    () => runCommand(["exec", "untrusted"]),
+    /unsupported npm command/
+  );
+});
+
 test("real launcher kills and retries a stalled audit attempt", async () => {
   let auditAttempts = 0;
   const launches = [];
@@ -60,6 +128,7 @@ test("real launcher kills and retries a stalled audit attempt", async () => {
 
   await runDependencyChecks({
     runnerOptions: {
+      environment: {},
       platform: "linux",
       spawnImpl: (_command, args) => {
         launches.push(args);
@@ -107,6 +176,7 @@ test("real launcher kills and retries a stalled audit attempt", async () => {
 test("real launcher preserves subprocess output and nonzero exit code", async () => {
   const written = { stderr: "", stdout: "" };
   const runCommand = createNpmRunner({
+    environment: {},
     spawnImpl: () =>
       fakeChild({
         code: 1,

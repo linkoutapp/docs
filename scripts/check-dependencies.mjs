@@ -14,6 +14,10 @@ const TREE_ARGS = [
   "--silent",
 ];
 const AUDIT_ARGS = ["audit", "--omit=dev"];
+const WINDOWS_FALLBACK_COMMANDS = new Map([
+  [JSON.stringify(TREE_ARGS), `npm.cmd ${TREE_ARGS.join(" ")}`],
+  [JSON.stringify(AUDIT_ARGS), `npm.cmd ${AUDIT_ARGS.join(" ")}`],
+]);
 const NETWORK_ERROR_PATTERN =
   /\b(?:EAI_AGAIN|ECONNRESET|ECONNREFUSED|ENETUNREACH|ENOTFOUND|ETIMEDOUT|ESOCKETTIMEDOUT)\b|socket hang up|fetch failed/i;
 const TRANSIENT_HTTP_PATTERN =
@@ -36,7 +40,33 @@ function commandError(args, code, signal, stdout, stderr, timeoutMs) {
   });
 }
 
+function npmInvocation(
+  args,
+  { environment, nodeExecutable, platform }
+) {
+  if (environment.npm_execpath) {
+    return {
+      args: [environment.npm_execpath, ...args],
+      executable: nodeExecutable,
+    };
+  }
+  if (platform !== "win32") {
+    return { args, executable: "npm" };
+  }
+
+  const command = WINDOWS_FALLBACK_COMMANDS.get(JSON.stringify(args));
+  if (!command) {
+    throw new Error("unsupported npm command for Windows fallback");
+  }
+  return {
+    args: ["/d", "/s", "/c", command],
+    executable: environment.ComSpec || environment.COMSPEC || "cmd.exe",
+  };
+}
+
 export function createNpmRunner({
+  environment = process.env,
+  nodeExecutable = process.execPath,
   platform = process.platform,
   spawnImpl = spawn,
   timeoutMs = COMMAND_TIMEOUT_MS,
@@ -45,11 +75,15 @@ export function createNpmRunner({
   stdout = process.stdout,
   stderr = process.stderr,
 } = {}) {
-  const executable = platform === "win32" ? "npm.cmd" : "npm";
+  return (npmArgs) => {
+    const invocation = npmInvocation(npmArgs, {
+      environment,
+      nodeExecutable,
+      platform,
+    });
 
-  return (args) =>
-    new Promise((resolve, reject) => {
-      const child = spawnImpl(executable, args, {
+    return new Promise((resolve, reject) => {
+      const child = spawnImpl(invocation.executable, invocation.args, {
         shell: false,
         stdio: ["ignore", "pipe", "pipe"],
       });
@@ -81,7 +115,7 @@ export function createNpmRunner({
             finish(
               reject,
               commandError(
-                args,
+                npmArgs,
                 "ETIMEDOUT",
                 null,
                 stdoutTail,
@@ -94,7 +128,7 @@ export function createNpmRunner({
           finish(
             reject,
             commandError(
-              args,
+              npmArgs,
               "ETIMEDOUT",
               null,
               stdoutTail,
@@ -114,7 +148,7 @@ export function createNpmRunner({
           finish(
             reject,
             commandError(
-              args,
+              npmArgs,
               "ETIMEDOUT",
               signal,
               stdoutTail,
@@ -127,11 +161,19 @@ export function createNpmRunner({
         } else {
           finish(
             reject,
-            commandError(args, code, signal, stdoutTail, stderrTail, timeoutMs)
+            commandError(
+              npmArgs,
+              code,
+              signal,
+              stdoutTail,
+              stderrTail,
+              timeoutMs
+            )
           );
         }
       });
     });
+  };
 }
 
 function isTransientNpmFailure(error) {

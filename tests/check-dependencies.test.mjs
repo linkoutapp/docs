@@ -287,6 +287,27 @@ test("does not mistake a vulnerability count for an HTTP failure", async () => {
   assert.equal(auditAttempts, 1);
 });
 
+for (const code of ["E408", "E429"]) {
+  test(`retries standard npm ${code} advisory diagnostics`, async () => {
+    let auditAttempts = 0;
+
+    await runDependencyChecks({
+      runCommand: async (_command, args) => {
+        if (args[0] !== "audit") return;
+        auditAttempts += 1;
+        if (auditAttempts === 1) {
+          throw Object.assign(new Error("advisory request failed"), {
+            stderr: `npm error code ${code}`,
+          });
+        }
+      },
+      sleep: async () => {},
+    });
+
+    assert.equal(auditAttempts, 2);
+  });
+}
+
 test("retries transient advisory HTTP failures", async () => {
   let auditAttempts = 0;
 

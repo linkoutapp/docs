@@ -17,7 +17,7 @@ const AUDIT_ARGS = ["audit", "--omit=dev"];
 const NETWORK_ERROR_PATTERN =
   /\b(?:EAI_AGAIN|ECONNRESET|ECONNREFUSED|ENETUNREACH|ENOTFOUND|ETIMEDOUT|ESOCKETTIMEDOUT)\b|socket hang up|fetch failed/i;
 const TRANSIENT_HTTP_PATTERN =
-  /\b(?:(?:HTTP|status)(?:\s+(?:status|code))?|npm error)\s*[:=]?\s*(?:408|429|5\d\d)\b|\bE5\d\d\b/i;
+  /\b(?:(?:HTTP|status)(?:\s+(?:status|code))?|npm error)\s*[:=]?\s*(?:408|429|5\d\d)\b|\bE(?:408|429|5\d\d)\b/i;
 
 function appendTail(current, chunk) {
   return `${current}${chunk}`.slice(-OUTPUT_TAIL_LIMIT);

@@ -35,7 +35,8 @@ contract drift fails the check.
 Contributions are accepted only through pull requests. CI runs for pull requests
 and updates to `main`.
 
-Linkout owns and operates the Vercel deployment for `docs.linkout.space`.
+The documentation targets a dedicated Vercel project serving
+`docs.linkout.space`. Repository changes do not mutate that project or DNS.
 Maintainers can run the manual **Deployment health** GitHub Actions workflow to
 check the deployed endpoints and TLS certificate outside the normal repository
 gate.

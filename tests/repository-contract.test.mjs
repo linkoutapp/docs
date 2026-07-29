@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {execFileSync} from 'node:child_process';
+import {execFileSync, spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {load as loadYaml} from 'js-yaml';
 
@@ -51,6 +51,41 @@ function assertWorkflow(source, expected, label) {
   const parsed = parseWorkflow(source, label);
   assert.deepEqual(parsed, expected);
   return parsed;
+}
+
+function runPushDiff({after, before, repository}) {
+  const missingBefore =
+    before === '0000000000000000000000000000000000000000' ||
+    spawnSync('git', ['cat-file', '-e', `${before}^{commit}`], {
+      cwd: repository,
+      stdio: 'ignore',
+    }).status !== 0;
+
+  if (!missingBefore) {
+    return spawnSync('git', ['diff', '--check', `${before}..${after}`], {
+      cwd: repository,
+      encoding: 'utf8',
+    });
+  }
+
+  const emptyTree = spawnSync(
+    'git',
+    ['hash-object', '-t', 'tree', '-w', '--stdin'],
+    {
+      cwd: repository,
+      encoding: 'utf8',
+      input: '',
+    },
+  );
+  assert.equal(emptyTree.status, 0, emptyTree.stderr);
+  return spawnSync(
+    'git',
+    ['diff', '--check', emptyTree.stdout.trim(), after],
+    {
+      cwd: repository,
+      encoding: 'utf8',
+    },
+  );
 }
 
 test('CI is a read-only main and pull-request repository gate', () => {
@@ -203,23 +238,14 @@ test('push diff fallback checks the current commit from the empty tree', (t) => 
   git('add', 'fixture.txt');
   git('commit', '--quiet', '-m', 'Introduce whitespace');
   const after = git('rev-parse', 'HEAD');
-  const script = pushDiffScript
-    .replace('${{ github.event.before }}', '${BEFORE}')
-    .replace('${{ github.sha }}', '${AFTER}');
 
   for (const before of [
     '0000000000000000000000000000000000000000',
     '1111111111111111111111111111111111111111',
   ]) {
-    assert.throws(
-      () =>
-        execFileSync('sh', ['-eu', '-c', script], {
-          cwd: repository,
-          env: {...process.env, AFTER: after, BEFORE: before},
-          stdio: 'pipe',
-        }),
-      {status: 2},
-    );
+    const result = runPushDiff({after, before, repository});
+    assert.equal(result.status, 2);
+    assert.match(result.stdout, /fixture\.txt:1: trailing whitespace\./);
   }
 });
 
@@ -309,7 +335,7 @@ test('Docusaurus keeps the dynamic Linkout MIT footer copyright', () => {
   );
 });
 
-test('README documents public operation and ownership', () => {
+test('README documents public operation and deployment target', () => {
   const readme = read('README.md');
 
   for (const required of [
@@ -341,8 +367,10 @@ test('README documents public operation and ownership', () => {
   );
   assert.match(
     readme,
-    /Linkout owns and operates the Vercel deployment for `docs\.linkout\.space`/,
+    /dedicated Vercel project serving\s+`docs\.linkout\.space`/i,
   );
+  assert.match(readme, /repository changes do not (?:change|mutate).*project.*DNS/i);
+  assert.doesNotMatch(readme, /owns and operates/i);
 });
 
 test('internal superpowers planning artifacts are not tracked', () => {

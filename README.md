@@ -32,11 +32,10 @@ contract drift fails the check.
 
 ## Contributions and operations
 
-Contributions are accepted only through pull requests. CI runs for pull requests
-and updates to `main`.
+Contributions are accepted only through pull requests. Run `npm run check`
+before opening or updating one.
 
 The documentation targets a dedicated Vercel project serving
 `docs.linkout.space`. Repository changes do not mutate that project or DNS.
-Maintainers can run the manual **Deployment health** GitHub Actions workflow to
-check the deployed endpoints and TLS certificate outside the normal repository
-gate.
+Run deployment health manually with `npm run check:deploy` to check the deployed
+endpoints and TLS certificate outside the normal repository gate.

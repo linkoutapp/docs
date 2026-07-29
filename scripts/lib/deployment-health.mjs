@@ -5,17 +5,42 @@ import { promisify } from "node:util";
 
 const DEFAULT_TARGET = "https://docs.linkout.space";
 const DEFAULT_TIMEOUT_MS = 5_000;
+const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 const ENDPOINTS = ["/", "/robots.txt", "/sitemap.xml"];
 const REQUIRED_CANONICAL = "https://docs.linkout.space/";
 const lookupAll = promisify(dnsLookup);
+const MONTHS = new Map(
+  ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    .map((month, index) => [month, index])
+);
 
 function errorDetail(error) {
   return [error?.code, error?.message].filter(Boolean).join(": ") || String(error);
 }
 
 function parseCertificateDate(value, label) {
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) {
+  const match =
+    /^([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+(\d{4})\s+GMT$/.exec(
+      value || ""
+    );
+  const month = MONTHS.get(match?.[1]);
+  const parts = match?.slice(2).map(Number);
+  if (!match || month === undefined) {
+    throw new Error(`TLS certificate has an invalid ${label} date`);
+  }
+
+  const [day, hour, minute, second, year] = parts;
+  const timestamp = Date.UTC(year, month, day, hour, minute, second);
+  const parsed = new Date(timestamp);
+  if (
+    year < 1000 ||
+    parsed.getUTCFullYear() !== year ||
+    parsed.getUTCMonth() !== month ||
+    parsed.getUTCDate() !== day ||
+    parsed.getUTCHours() !== hour ||
+    parsed.getUTCMinutes() !== minute ||
+    parsed.getUTCSeconds() !== second
+  ) {
     throw new Error(`TLS certificate has an invalid ${label} date`);
   }
   return timestamp;
@@ -28,7 +53,10 @@ export function validateCertificate(
 ) {
   const validFrom = parseCertificateDate(certificate?.valid_from, "valid-from");
   const validTo = parseCertificateDate(certificate?.valid_to, "valid-to");
-  const nowTimestamp = now.getTime();
+  const nowTimestamp = now instanceof Date ? now.getTime() : Number.NaN;
+  if (!Number.isFinite(nowTimestamp)) {
+    throw new Error("TLS certificate validation current time is invalid");
+  }
 
   if (nowTimestamp < validFrom) {
     throw new Error(
@@ -81,50 +109,110 @@ export function createTlsInspector({
     });
 }
 
-export function createHttpsRequester({ requestImpl = https.request } = {}) {
+export function createHttpsRequester({
+  requestImpl = https.request,
+  maxBodyBytes = DEFAULT_MAX_BODY_BYTES,
+  setTimer = setTimeout,
+  clearTimer = clearTimeout,
+} = {}) {
   return (url, { timeoutMs = DEFAULT_TIMEOUT_MS } = {}) =>
     new Promise((resolve, reject) => {
-      const request = requestImpl(
+      let request;
+      let response;
+      let responseCompleted = false;
+      let settled = false;
+      let deadline;
+
+      const finish = (callback, value, { destroy = false } = {}) => {
+        if (settled) return;
+        settled = true;
+        clearTimer(deadline);
+        if (destroy) {
+          response?.destroy();
+          request?.destroy();
+        }
+        callback(value);
+      };
+      const fail = (message, cause) => {
+        const error = new Error(message, cause ? { cause } : undefined);
+        finish(reject, error, { destroy: true });
+      };
+
+      request = requestImpl(
         url,
         {
           rejectUnauthorized: true,
           servername: url.hostname,
         },
-        (response) => {
+        (incomingResponse) => {
+          response = incomingResponse;
           const chunks = [];
+          let bodyBytes = 0;
           response.setEncoding("utf8");
-          response.on("data", (chunk) => chunks.push(chunk));
-          response.once("end", () =>
-            resolve({
+          response.on("data", (chunk) => {
+            if (settled) return;
+            bodyBytes += Buffer.byteLength(chunk);
+            if (bodyBytes > maxBodyBytes) {
+              fail(`response exceeded ${maxBodyBytes} bytes`);
+              return;
+            }
+            chunks.push(chunk);
+          });
+          response.once("error", (error) =>
+            fail(`response failed (${error?.message || error})`, error)
+          );
+          response.once("aborted", () => fail("response aborted"));
+          response.once("close", () => {
+            if (!responseCompleted) {
+              fail("response closed before completion");
+            }
+          });
+          response.once("end", () => {
+            responseCompleted = true;
+            finish(resolve, {
               body: chunks.join(""),
               statusCode: response.statusCode,
-            })
-          );
+            });
+          });
         }
       );
 
-      request.setTimeout(timeoutMs, () => {
-        request.destroy(
-          Object.assign(new Error(`timed out after ${timeoutMs}ms`), {
-            code: "ETIMEDOUT",
-          })
-        );
-      });
-      request.once("error", reject);
+      deadline = setTimer(() => {
+        fail(`request deadline exceeded after ${timeoutMs}ms`);
+      }, timeoutMs);
+      request.once("error", (error) =>
+        fail(error?.message || String(error), error)
+      );
       request.end();
     });
 }
 
+function parseAttributes(tag) {
+  const attributes = new Map();
+  const source = tag.replace(/^<link\b/i, "").replace(/\/?>$/, "");
+  const attributePattern =
+    /([^\s"'=<>`]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
+  let match;
+  while ((match = attributePattern.exec(source))) {
+    const name = match[1].toLowerCase();
+    if (!attributes.has(name)) {
+      attributes.set(name, match[2] ?? match[3] ?? match[4] ?? "");
+    }
+  }
+  return attributes;
+}
+
 function containsRequiredCanonical(body) {
-  const linkTags = body.match(/<link\b[^>]*>/gi) || [];
-  return linkTags.some(
-    (tag) =>
-      /\brel\s*=\s*["'][^"']*\bcanonical\b[^"']*["']/i.test(tag) &&
-      new RegExp(
-        `\\bhref\\s*=\\s*["']${REQUIRED_CANONICAL.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}["']`,
-        "i"
-      ).test(tag)
-  );
+  const markup = body.replace(/<!--[\s\S]*?-->/g, "");
+  const linkTags = markup.match(/<link(?=\s|\/?>)[^>]*>/gi) || [];
+  return linkTags.some((tag) => {
+    const attributes = parseAttributes(tag);
+    const relTokens = (attributes.get("rel") || "").split(/\s+/);
+    return (
+      relTokens.some((token) => token.toLowerCase() === "canonical") &&
+      attributes.get("href") === REQUIRED_CANONICAL
+    );
+  });
 }
 
 export async function checkDeployment({

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import test from "node:test";
 
 import {
   checkDeployment,
+  createHttpsRequester,
   validateCertificate,
 } from "../scripts/lib/deployment-health.mjs";
 
@@ -27,6 +29,26 @@ function healthyDependencies(overrides = {}) {
     now: new Date("2026-07-29T00:00:00Z"),
     ...overrides,
   };
+}
+
+function fakeHttpsExchange({ statusCode = 200 } = {}) {
+  const response = new EventEmitter();
+  response.statusCode = statusCode;
+  response.destroyed = false;
+  response.setEncoding = () => {};
+  response.destroy = () => {
+    response.destroyed = true;
+  };
+
+  const request = new EventEmitter();
+  request.destroyed = false;
+  request.setTimeout = () => {};
+  request.destroy = () => {
+    request.destroyed = true;
+  };
+  request.end = () => {};
+
+  return { request, response };
 }
 
 test("reports a DNS lookup failure with the hostname", async () => {
@@ -78,6 +100,28 @@ test("rejects a certificate hostname mismatch", () => {
         { now: new Date("2026-07-29T00:00:00Z") }
       ),
     /TLS certificate hostname mismatch/
+  );
+});
+
+test("rejects impossible certificate dates instead of normalizing them", () => {
+  assert.throws(
+    () =>
+      validateCertificate(
+        { ...VALID_CERTIFICATE, valid_from: "Feb 30 00:00:00 2026 GMT" },
+        "docs.linkout.space",
+        { now: new Date("2026-07-29T00:00:00Z") }
+      ),
+    /TLS certificate has an invalid valid-from date/
+  );
+});
+
+test("rejects an invalid current time", () => {
+  assert.throws(
+    () =>
+      validateCertificate(VALID_CERTIFICATE, "docs.linkout.space", {
+        now: new Date("invalid"),
+      }),
+    /current time is invalid/
   );
 });
 
@@ -143,6 +187,114 @@ test("rejects a homepage without the required canonical URL", async () => {
     /\/: missing canonical https:\/\/docs\.linkout\.space\//
   );
 });
+
+for (const fakeCanonical of [
+  '<!-- <link rel="canonical" href="https://docs.linkout.space/"> -->',
+  '<link data-rel="canonical" data-href="https://docs.linkout.space/">',
+]) {
+  test(`rejects canonical lookalike: ${fakeCanonical.slice(0, 24)}`, async () => {
+    await assert.rejects(
+      checkDeployment({
+        ...healthyDependencies({
+          request: async () => ({ body: fakeCanonical, statusCode: 200 }),
+        }),
+      }),
+      /\/: missing canonical https:\/\/docs\.linkout\.space\//
+    );
+  });
+}
+
+test("accepts canonical attributes in either order, case, and quote style", async () => {
+  await checkDeployment({
+    ...healthyDependencies({
+      request: async (url) => ({
+        body:
+          url.pathname === "/"
+            ? "<LINK HREF='https://docs.linkout.space/' REL='stylesheet CANONICAL'>"
+            : "ok",
+        statusCode: 200,
+      }),
+    }),
+  });
+});
+
+test("enforces an absolute HTTPS response deadline during slow-drip data", async () => {
+  const { request, response } = fakeHttpsExchange();
+  let deadline;
+  const requester = createHttpsRequester({
+    requestImpl: (_url, _options, onResponse) => {
+      request.end = () => onResponse(response);
+      return request;
+    },
+    setTimer: (callback) => {
+      deadline = callback;
+      return {};
+    },
+    clearTimer: () => {},
+  });
+
+  const pending = requester(new URL(`${TARGET}/robots.txt`), { timeoutMs: 25 });
+  response.emit("data", "still arriving");
+  assert.equal(typeof deadline, "function");
+  deadline();
+
+  await assert.rejects(
+    pending,
+    /request deadline exceeded after 25ms/
+  );
+  assert.equal(request.destroyed, true);
+  assert.equal(response.destroyed, true);
+});
+
+test("rejects and destroys an oversized HTTPS response", async () => {
+  const { request, response } = fakeHttpsExchange();
+  const requester = createHttpsRequester({
+    maxBodyBytes: 4,
+    requestImpl: (_url, _options, onResponse) => {
+      request.end = () => {
+        onResponse(response);
+        response.emit("data", "12345");
+        response.emit("end");
+      };
+      return request;
+    },
+  });
+
+  await assert.rejects(
+    requester(new URL(`${TARGET}/sitemap.xml`)),
+    /response exceeded 4 bytes/
+  );
+  assert.equal(request.destroyed, true);
+  assert.equal(response.destroyed, true);
+});
+
+for (const [event, expected] of [
+  ["error", /response failed \(stream failed\)/],
+  ["aborted", /response aborted/],
+  ["close", /response closed before completion/],
+]) {
+  test(`rejects cleanly when the HTTPS response emits ${event}`, async () => {
+    const { request, response } = fakeHttpsExchange();
+    const requester = createHttpsRequester({
+      requestImpl: (_url, _options, onResponse) => {
+        request.end = () => {
+          onResponse(response);
+          if (event === "error") {
+            response.emit(event, new Error("stream failed"));
+          } else {
+            response.emit(event);
+          }
+          response.emit("end");
+        };
+        return request;
+      },
+    });
+
+    await assert.rejects(requester(new URL(`${TARGET}/`)), expected);
+    assert.equal(request.destroyed, true);
+    assert.equal(response.destroyed, true);
+  });
+}
 
 test("checks the default hostname and all required endpoints successfully", async () => {
   const lookedUp = [];

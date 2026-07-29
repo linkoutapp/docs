@@ -14,6 +14,9 @@ const VALID_CERTIFICATE = {
   valid_to: "Jan 01 00:00:00 2027 GMT",
   subjectaltname: "DNS:docs.linkout.space",
 };
+const CANONICAL_LINK =
+  '<link rel="canonical" href="https://docs.linkout.space/">';
+const CANONICAL_HEAD = `<html><head>${CANONICAL_LINK}</head><body></body></html>`;
 
 function healthyDependencies(overrides = {}) {
   return {
@@ -22,7 +25,7 @@ function healthyDependencies(overrides = {}) {
     request: async (url) => ({
       body:
         url.pathname === "/"
-          ? '<link rel="canonical" href="https://docs.linkout.space/">'
+          ? CANONICAL_HEAD
           : "ok",
       statusCode: 200,
     }),
@@ -150,7 +153,7 @@ test("reports an endpoint timeout with its path", async () => {
               code: "ETIMEDOUT",
             });
           }
-          return { body: '<link rel="canonical" href="https://docs.linkout.space/">', statusCode: 200 };
+          return { body: CANONICAL_HEAD, statusCode: 200 };
         },
       }),
     }),
@@ -166,7 +169,7 @@ for (const endpoint of ["/", "/robots.txt", "/sitemap.xml"]) {
           request: async (url) => ({
             body:
               url.pathname === "/"
-                ? '<link rel="canonical" href="https://docs.linkout.space/">'
+                ? CANONICAL_HEAD
                 : "",
             statusCode: url.pathname === endpoint ? 503 : 200,
           }),
@@ -189,8 +192,9 @@ test("rejects a homepage without the required canonical URL", async () => {
 });
 
 for (const fakeCanonical of [
-  '<!-- <link rel="canonical" href="https://docs.linkout.space/"> -->',
-  '<link data-rel="canonical" data-href="https://docs.linkout.space/">',
+  `<html><head><!-- ${CANONICAL_LINK} --></head></html>`,
+  `<html><head><!-- ${CANONICAL_LINK}</head></html>`,
+  '<html><head><link data-rel="canonical" data-href="https://docs.linkout.space/"></head></html>',
 ]) {
   test(`rejects canonical lookalike: ${fakeCanonical.slice(0, 24)}`, async () => {
     await assert.rejects(
@@ -204,19 +208,62 @@ for (const fakeCanonical of [
   });
 }
 
-test("accepts canonical attributes in either order, case, and quote style", async () => {
-  await checkDeployment({
-    ...healthyDependencies({
-      request: async (url) => ({
-        body:
-          url.pathname === "/"
-            ? "<LINK HREF='https://docs.linkout.space/' REL='stylesheet CANONICAL'>"
-            : "ok",
-        statusCode: 200,
+for (const [container, markup] of [
+  ["script", `<script>const example = '${CANONICAL_LINK}'</script>`],
+  ["style", `<style>/* ${CANONICAL_LINK} */</style>`],
+  ["textarea", `<textarea>${CANONICAL_LINK}</textarea>`],
+  ["template", `<template>${CANONICAL_LINK}</template>`],
+  ["noscript", `<noscript>${CANONICAL_LINK}</noscript>`],
+  ["xmp", `<xmp>${CANONICAL_LINK}</xmp>`],
+]) {
+  test(`rejects a canonical string inside ${container}`, async () => {
+    await assert.rejects(
+      checkDeployment({
+        ...healthyDependencies({
+          request: async () => ({
+            body: `<html><head>${markup}</head><body></body></html>`,
+            statusCode: 200,
+          }),
+        }),
+      }),
+      /\/: missing canonical https:\/\/docs\.linkout\.space\//
+    );
+  });
+}
+
+test("rejects a real canonical link outside the document head", async () => {
+  await assert.rejects(
+    checkDeployment({
+      ...healthyDependencies({
+        request: async () => ({
+          body: `<html><head></head><body>${CANONICAL_LINK}</body></html>`,
+          statusCode: 200,
+        }),
       }),
     }),
-  });
+    /\/: missing canonical https:\/\/docs\.linkout\.space\//
+  );
 });
+
+for (const validCanonical of [
+  '<link rel="canonical" href="https://docs.linkout.space/">',
+  "<LINK HREF='https://docs.linkout.space/' REL='stylesheet CANONICAL'>",
+  "<link href=https://docs.linkout.space/ rel=canonical>",
+]) {
+  test(`accepts a real head canonical with variant attributes: ${validCanonical.slice(0, 28)}`, async () => {
+    await checkDeployment({
+      ...healthyDependencies({
+        request: async (url) => ({
+          body:
+            url.pathname === "/"
+              ? `<HTML><HEAD>${validCanonical}</HEAD><BODY></BODY></HTML>`
+              : "ok",
+          statusCode: 200,
+        }),
+      }),
+    });
+  });
+}
 
 test("enforces an absolute HTTPS response deadline during slow-drip data", async () => {
   const { request, response } = fakeHttpsExchange();
@@ -316,7 +363,7 @@ test("checks the default hostname and all required endpoints successfully", asyn
         return {
           body:
             url.pathname === "/"
-              ? '<link href="https://docs.linkout.space/" rel="canonical">'
+              ? '<html><head><link href="https://docs.linkout.space/" rel="canonical"></head></html>'
               : "ok",
           statusCode: 204,
         };

@@ -9,6 +9,16 @@ const DEFAULT_MAX_BODY_BYTES = 1024 * 1024;
 const ENDPOINTS = ["/", "/robots.txt", "/sitemap.xml"];
 const REQUIRED_CANONICAL = "https://docs.linkout.space/";
 const lookupAll = promisify(dnsLookup);
+const IGNORED_CANONICAL_CONTEXTS = new Set([
+  "iframe",
+  "noembed",
+  "noscript",
+  "script",
+  "style",
+  "template",
+  "textarea",
+  "xmp",
+]);
 const MONTHS = new Map(
   ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
     .map((month, index) => [month, index])
@@ -202,17 +212,111 @@ function parseAttributes(tag) {
   return attributes;
 }
 
+function readMarkupTag(markup, start) {
+  let quote;
+  let end = start + 1;
+  for (; end < markup.length; end += 1) {
+    const character = markup[end];
+    if (quote) {
+      if (character === quote) quote = undefined;
+    } else if (character === '"' || character === "'") {
+      quote = character;
+    } else if (character === ">") {
+      break;
+    }
+  }
+  if (end === markup.length) return undefined;
+
+  let source = markup.slice(start + 1, end).trim();
+  const closing = source.startsWith("/");
+  if (closing) source = source.slice(1).trimStart();
+  const nameMatch = /^([A-Za-z][A-Za-z0-9:-]*)/.exec(source);
+  if (!nameMatch) {
+    return { end: end + 1 };
+  }
+  return {
+    closing,
+    end: end + 1,
+    name: nameMatch[1].toLowerCase(),
+    raw: markup.slice(start, end + 1),
+    selfClosing: /\/\s*$/.test(source),
+  };
+}
+
+function skipComment(markup, start) {
+  const end = markup.indexOf("-->", start + 4);
+  return end === -1 ? markup.length : end + 3;
+}
+
+function skipIgnoredContext(markup, start, contextName) {
+  let cursor = start;
+  let depth = 1;
+  while (cursor < markup.length) {
+    const tagStart = markup.indexOf("<", cursor);
+    if (tagStart === -1) return markup.length;
+    if (markup.startsWith("<!--", tagStart)) {
+      cursor = skipComment(markup, tagStart);
+      continue;
+    }
+
+    const tag = readMarkupTag(markup, tagStart);
+    if (!tag) return markup.length;
+    cursor = tag.end;
+    if (tag.name !== contextName) continue;
+    if (tag.closing) {
+      depth -= 1;
+      if (depth === 0) return cursor;
+    } else if (contextName === "template" && !tag.selfClosing) {
+      depth += 1;
+    }
+  }
+  return markup.length;
+}
+
 function containsRequiredCanonical(body) {
-  const markup = body.replace(/<!--[\s\S]*?-->/g, "");
-  const linkTags = markup.match(/<link(?=\s|\/?>)[^>]*>/gi) || [];
-  return linkTags.some((tag) => {
-    const attributes = parseAttributes(tag);
+  let cursor = 0;
+  let inHead = false;
+  while (cursor < body.length) {
+    const tagStart = body.indexOf("<", cursor);
+    if (tagStart === -1) return false;
+    if (body.startsWith("<!--", tagStart)) {
+      cursor = skipComment(body, tagStart);
+      continue;
+    }
+
+    const tag = readMarkupTag(body, tagStart);
+    if (!tag) return false;
+    cursor = tag.end;
+    if (!tag.name) continue;
+
+    if (tag.closing) {
+      if (tag.name === "head") inHead = false;
+      continue;
+    }
+    if (tag.name === "head") {
+      inHead = true;
+      continue;
+    }
+    if (tag.name === "body") {
+      inHead = false;
+      continue;
+    }
+    if (IGNORED_CANONICAL_CONTEXTS.has(tag.name) && !tag.selfClosing) {
+      cursor = skipIgnoredContext(body, cursor, tag.name);
+      continue;
+    }
+    if (tag.name !== "link" || !inHead) continue;
+
+    const attributes = parseAttributes(tag.raw);
     const relTokens = (attributes.get("rel") || "").split(/\s+/);
-    return (
+    if (
       relTokens.some((token) => token.toLowerCase() === "canonical") &&
       attributes.get("href") === REQUIRED_CANONICAL
-    );
-  });
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export async function checkDeployment({

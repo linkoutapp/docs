@@ -78,46 +78,22 @@ test("real launcher falls back to the npm executable on POSIX", async () => {
   ]);
 });
 
-test("real launcher uses ComSpec with a controlled command on Windows fallback", async () => {
-  const launches = [];
+test("Windows without npm_execpath fails immediately without spawning", () => {
+  let spawnCalls = 0;
   const runCommand = createNpmRunner({
     environment: { ComSpec: "C:\\Windows\\System32\\cmd.exe" },
     platform: "win32",
-    spawnImpl: (command, args, options) => {
-      launches.push({ command, args, options });
-      return fakeChild();
-    },
-    stderr: { write() {} },
-    stdout: { write() {} },
-  });
-
-  await runCommand(["audit", "--omit=dev"]);
-
-  assert.deepEqual(launches, [
-    {
-      command: "C:\\Windows\\System32\\cmd.exe",
-      args: ["/d", "/s", "/c", "npm.cmd audit --omit=dev"],
-      options: {
-        shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    },
-  ]);
-});
-
-test("Windows fallback rejects npm arguments outside the controlled checks", () => {
-  const runCommand = createNpmRunner({
-    environment: {},
-    platform: "win32",
     spawnImpl: () => {
-      assert.fail("must not spawn an unapproved Windows command");
+      spawnCalls += 1;
+      return fakeChild();
     },
   });
 
   assert.throws(
-    () => runCommand(["exec", "untrusted"]),
-    /unsupported npm command/
+    () => runCommand(["audit", "--omit=dev"]),
+    /npm_execpath is required on Windows/
   );
+  assert.equal(spawnCalls, 0);
 });
 
 test("real launcher kills and retries a stalled audit attempt", async () => {

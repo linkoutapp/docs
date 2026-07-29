@@ -14,10 +14,6 @@ const TREE_ARGS = [
   "--silent",
 ];
 const AUDIT_ARGS = ["audit", "--omit=dev"];
-const WINDOWS_FALLBACK_COMMANDS = new Map([
-  [JSON.stringify(TREE_ARGS), `npm.cmd ${TREE_ARGS.join(" ")}`],
-  [JSON.stringify(AUDIT_ARGS), `npm.cmd ${AUDIT_ARGS.join(" ")}`],
-]);
 const NETWORK_ERROR_PATTERN =
   /\b(?:EAI_AGAIN|ECONNRESET|ECONNREFUSED|ENETUNREACH|ENOTFOUND|ETIMEDOUT|ESOCKETTIMEDOUT)\b|socket hang up|fetch failed/i;
 const TRANSIENT_HTTP_PATTERN =
@@ -54,14 +50,9 @@ function npmInvocation(
     return { args, executable: "npm" };
   }
 
-  const command = WINDOWS_FALLBACK_COMMANDS.get(JSON.stringify(args));
-  if (!command) {
-    throw new Error("unsupported npm command for Windows fallback");
-  }
-  return {
-    args: ["/d", "/s", "/c", command],
-    executable: environment.ComSpec || environment.COMSPEC || "cmd.exe",
-  };
+  throw new Error(
+    "npm_execpath is required on Windows; run this checker through npm"
+  );
 }
 
 export function createNpmRunner({

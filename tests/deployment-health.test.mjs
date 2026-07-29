@@ -245,6 +245,32 @@ test("rejects a real canonical link outside the document head", async () => {
   );
 });
 
+for (const [context, body] of [
+  [
+    "title RCDATA",
+    `<html><head><title>${CANONICAL_LINK}</title></head><body></body></html>`,
+  ],
+  [
+    "a duplicate head inside body",
+    `<html><head></head><body><head>${CANONICAL_LINK}</head></body></html>`,
+  ],
+  [
+    "self-closing script syntax",
+    `<html><head><script/>${CANONICAL_LINK}</script></head><body></body></html>`,
+  ],
+]) {
+  test(`rejects a canonical parser bypass in ${context}`, async () => {
+    await assert.rejects(
+      checkDeployment({
+        ...healthyDependencies({
+          request: async () => ({ body, statusCode: 200 }),
+        }),
+      }),
+      /\/: missing canonical https:\/\/docs\.linkout\.space\//
+    );
+  });
+}
+
 for (const validCanonical of [
   '<link rel="canonical" href="https://docs.linkout.space/">',
   "<LINK HREF='https://docs.linkout.space/' REL='stylesheet CANONICAL'>",

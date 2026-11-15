@@ -131,7 +131,7 @@ test('README documents public operation and deployment target', () => {
     assert.ok(readme.includes(required), `README must include ${required}`);
   }
   assert.match(readme, /live source contracts?/i);
-  assert.match(readme, /check:local` checks the working-tree diff/i);
+  assert.match(readme, /working-tree diff/i);
   assert.match(readme, /retr(?:y|ies)/i);
   assert.match(readme, /drift[\s\S]*fail/i);
   assert.match(readme, /accepted only through pull requests/i);

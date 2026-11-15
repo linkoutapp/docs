@@ -118,6 +118,15 @@ a:hover {
   text-decoration-thickness: 1px;
 }
 
+.markdown a:not(.hash-link) {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+}
+
+.markdown a:not(.hash-link):hover {
+  text-decoration-thickness: 2px;
+}
+
 .breadcrumbs__link,
 .footer__link-item,
 .hash-link,

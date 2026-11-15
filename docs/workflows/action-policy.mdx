@@ -7,7 +7,11 @@ description: Confirmation, operating hours, limits, stop states, and ledger beha
 
 Every mutation is disabled by default.
 
-| Operation | Default enabled | Default successful-action limit |
+:::note Release availability
+Atomic reservations require a release containing the security-hardening change. The published `linkout-scraper@2.0.0` artifact predates that change; installing it alone does not enable these protections.
+:::
+
+| Operation | Default enabled | Default admitted-attempt limit |
 | --- | ---: | ---: |
 | `connect` | No | 10 |
 | `message` | No | 20 |
@@ -18,13 +22,13 @@ The default local operating window is 09:00 through 17:59. The end hour, `18`, i
 
 Before an action begins, `createActionPolicy().begin()` checks in this order:
 
-1. `confirm` is truthy.
+1. `confirm` is the boolean `true`.
 2. The operation exists in the policy and has `enabled: true`.
 3. The current local hour is within `operatingHours`.
-4. The ledger's successful count for that operation and local calendar date is below `dailyLimit`.
-5. When both `page` and a `detectState` function exist, page-state detection does not return `stop: true`.
+4. When both `page` and a `detectState` function exist, page-state detection does not return `stop: true`.
+5. The ledger atomically reserves an attempt for that operation and local calendar date, within `dailyLimit`.
 
-Raw `createActionPolicy().begin()` uses a truthiness check; it does not enforce the boolean type. The `connect` and `message` services pass the caller's `confirm` value through, while `like` and `endorse` normalize it with `data.confirm === true`. Callers should pass the literal boolean `true` only after a person has reviewed and confirmed the exact action.
+`createActionPolicy().begin()` requires the literal boolean `true`; strings such as `"false"` do not authorize work. Pass `confirm: true` only after a person has reviewed and confirmed the exact action.
 
 A rejected gate records the rejection and throws one of these stable error codes:
 
@@ -33,10 +37,15 @@ A rejected gate records the rejection and throws one of these stable error codes
 | `CONFIRMATION_REQUIRED` | Explicit confirmation was absent |
 | `OPERATION_DISABLED` | The operation is missing or disabled |
 | `OUTSIDE_OPERATING_HOURS` | The local hour is outside the configured window |
-| `DAILY_LIMIT_REACHED` | The successful count has reached the configured limit |
+| `DAILY_LIMIT_REACHED` | The admitted-attempt budget has reached the configured limit |
 | `PAGE_STATE_STOP` | Page-state detection requires the action to stop |
+| `ATOMIC_LEDGER_REQUIRED` | A custom ledger lacks atomic reservations |
+| `INVALID_DAILY_LIMIT` | The limit is not a non-negative safe integer |
+| `LEDGER_BUSY` | Another process or a stale lock prevents admission |
 
-Only entries with the same operation, the same local date, and `outcome: "success"` count toward a limit. Policy-gate rejections are recorded with `outcome: "rejected"`. After `begin()` returns a transaction, a standard mutation service records a subsequent interaction failure by calling `transaction.reject()`, which writes `outcome: "failed"`. Failures before `begin()`—such as navigation, profile lookup, or target verification failures, depending on the service—are outside the policy ledger. Rejected and failed entries do not increment the successful count.
+A successful `begin()` writes one `outcome: "reserved"` entry with an `actionId` before browser interaction. Every reservation consumes one slot, including pending or failed work: a browser error can occur after an action was sent. A later success with that action ID does not consume another slot. Older success entries without an action ID also count. Gate rejections do not reserve work. `countSuccessful()` still reports only successful outcomes.
+
+A standard mutation service records `outcome: "failed"` if an admitted interaction fails. Failures before `begin()` are outside the policy ledger.
 
 ## Ledger boundary
 
@@ -65,7 +74,12 @@ await Linkout.services.connect(page, {actionPolicy}, {
 
 The shared ledger still resets when that policy or Node.js process is replaced. The default memory ledger is therefore not a durable daily safety control or an account-protection mechanism.
 
-Each sanitized entry contains `timestamp`, `operation`, `target`, `outcome`, `errorCode`, and, when supplied, `localDate`. A target is retained only as the origin and path of an HTTPS `www.linkedin.com` URL; query strings and fragments are removed, and other targets become an empty string. Other supplied fields are discarded. The ledger does not retain page contents, credentials, cookies, session tokens, message or connection-note bodies, or unrelated profile data.
+Each sanitized entry contains `timestamp`, `operation`, `target`, `outcome`, `errorCode`, and, when supplied, `localDate` and `actionId`. A target is retained only as the origin and path of an HTTPS `www.linkedin.com` URL; query strings and fragments are removed, and other targets become an empty string. Other supplied fields are discarded. The ledger does not retain page contents, credentials, cookies, session tokens, message or connection-note bodies, or unrelated profile data.
+
+
+For cross-process or restart-safe admission, inject `createLedger({stateDirectory})` from `linkout-scraper/lib/policy/ledger`. All writers for an account must share that private directory and timezone. Custom ledgers must provide atomic `reserve(entry, limit)`. The file ledger holds an exclusive `.lock` while it checks and reserves capacity; a competing process fails closed with `LEDGER_BUSY`.
+
+After a crash, stop all writers before removing a stale `.lock`. Keep the ledger itself so existing reservations continue to count. No automatic timeout steals a live writer's lock.
 
 Source: [policy defaults](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/policy/defaults.js), [action-policy checks](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/policy/action-policy.js), [ledger sanitization](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/policy/ledger.js), [mutation policy selection](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/linkedin/mutation-runtime.js), [interaction checks](https://github.com/linkoutapp/linkout-scraper/blob/main/lib/interactions/browser-input.js).
 

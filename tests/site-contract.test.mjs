@@ -116,19 +116,19 @@ test('footer links only to public source resources that exist', () => {
 test('patched transitive dependencies are explicitly scoped', () => {
   assert.equal(
     packageJson.overrides?.['minimatch@3.1.5']?.['brace-expansion'],
-    '5.0.8',
+    '5.0.13',
   );
   assert.equal(
     packageJson.overrides?.['copy-webpack-plugin@11.0.0']?.[
       'serialize-javascript'
     ],
-    '7.0.5',
+    '7.1.4',
   );
   assert.equal(
     packageJson.overrides?.['css-minimizer-webpack-plugin@5.0.1']?.[
       'serialize-javascript'
     ],
-    '7.0.5',
+    '7.1.4',
   );
   assert.equal(
     packageJson.overrides?.['sockjs@0.3.24']?.uuid,

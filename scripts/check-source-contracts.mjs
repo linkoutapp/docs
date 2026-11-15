@@ -333,16 +333,17 @@ equal(
     "CONFIRMATION_REQUIRED",
     "OPERATION_DISABLED",
     "OUTSIDE_OPERATING_HOURS",
-    "DAILY_LIMIT_REACHED",
     "PAGE_STATE_STOP",
+    "ATOMIC_LEDGER_REQUIRED",
+    "DAILY_LIMIT_REACHED",
   ],
   "documented policy error-code set changed"
 );
 match(
   policyPath,
   policy,
-  /if\s*\(\s*!confirm\s*\)/,
-  "explicit confirmation must use a truthy gate"
+  /if\s*\(\s*confirm\s*!==\s*true\s*\)/,
+  "explicit confirmation must require the boolean true"
 );
 match(
   policyPath,
@@ -407,7 +408,7 @@ match(
 match(
   ledgerPath,
   ledger,
-  /return\s*\{\s*append,\s*countSuccessful,\s*file,\s*read\s*\}/,
+  /return\s*\{\s*append,\s*countSuccessful,\s*file,\s*read,\s*reserve\s*\}/,
   "persistent ledger public methods changed"
 );
 
@@ -691,6 +692,10 @@ match(
   /default_prompt:\s*"Read the requested LinkedIn information without changing the account\."/,
   "OpenAI skill prompt must remain bounded and read-only"
 );
+
+match(policyPath, policy, /await ledger\.reserve\(/, "admission must reserve atomically");
+match(ledgerPath, ledger, /fs\.open\(`\$\{file\}\.lock`, "wx", 0o600\)/, "file reservations must hold an exclusive private lock");
+
 
 console.log(
   `Verified ${paths.length} public linkout-scraper source files and high-risk contracts.`

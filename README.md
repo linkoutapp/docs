@@ -45,3 +45,8 @@ endpoints and TLS certificate outside the normal repository gate.
 Linkout’s $29 offer includes one 30-minute session with Sai to set up `linkout-scraper` on your Mac. The code is free under the MIT license. The deal is in AppSumo review and is not available to buy yet.
 
 [AppSumo deal status](https://www.linkout.space/appsumo.html)
+
+
+## Dependency advisory still open
+
+The current Docusaurus/SVGR dependency tree includes `deepmerge@4.3.1`. GHSA-gcqx-w48m-w2h4 has no patched upstream release. Five low-severity npm audit records refer to this one advisory and its parent packages. `npm run check:deps` intentionally continues to fail until the dependency can be patched or removed; its audit threshold has not been relaxed. Do not feed untrusted configuration objects into this build pipeline.
